@@ -32,8 +32,12 @@ After creating your accounts, update your `.env.example` to be `.env.local` for 
 
 2. **Install Dependencies**
 
+   This project uses [pnpm](https://pnpm.io/) (see `packageManager` in `package.json`).
+   Install with pnpm so the `pnpm.overrides` security pins are applied — installing
+   with npm or yarn ignores them and pulls vulnerable transitive dependencies.
+
    ```sh
-   npm install
+   pnpm install --frozen-lockfile
    ```
 
 3. **Set Up Environment Variables**
@@ -43,19 +47,19 @@ After creating your accounts, update your `.env.example` to be `.env.local` for 
 4. **Generate the Database Migrations**
 
    ```sh
-   npm drizzle-kit generate
+   pnpm db:generate
    ```
 
 5. **Run the Database Migrations**
 
    ```sh
-   npm tsx lib/db/migrate.ts
+   pnpm db:migrate
    ```
 
 6. **Start the Development Server**
 
    ```sh
-   npm run dev
+   pnpm dev
    ```
 ### With docker
 
@@ -72,6 +76,18 @@ After creating your accounts, update your `.env.example` to be `.env.local` for 
 - Push your code to a GitHub repository.
 - Connect your repository to Vercel.
 - Set the environment variables in Vercel's dashboard under "Settings > Environment Variables".
+
+## Dependency Maintenance
+
+Run `pnpm audit` to check for known vulnerabilities.
+
+The `pnpm.overrides` block in `package.json` force-resolves transitive dependencies
+that a direct dependency still pins to a vulnerable version (for example, `next`
+pins `postcss` 8.4.31, and `tailwindcss` reaches a vulnerable `glob` via `sucrase`).
+Each entry can be removed once the parent package ships a release that depends on a
+patched version on its own — re-run `pnpm audit` after removing one to confirm.
+
+Requires Node.js >= 20.9.0.
 
 ## Additional Resources
 

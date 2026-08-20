@@ -2,7 +2,7 @@
 
 import { Lead } from "@/lib/db";
 import { Button } from "../ui/button";
-import { parse } from "json2csv";
+import { Parser } from "@json2csv/plainjs";
 import { toast } from "sonner";
 
 type ExportCSVProps = {
@@ -25,9 +25,10 @@ export default function ExportCSV({ id, leads, schema }: ExportCSVProps) {
         return transformedLead;
       });
 
-      const csvData = parse(transformedLeads, {
+      const parser = new Parser({
         fields: schema.map((col) => col.key),
       });
+      const csvData = parser.parse(transformedLeads);
       const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
       const downloadUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
