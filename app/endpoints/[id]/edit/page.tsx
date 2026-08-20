@@ -22,9 +22,15 @@ const pageData = {
   description: "Edit your endpoint.",
 };
 
-export default async function Page({ params }: { params: { id: string } }) {
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+
   // fetch endpoint data
-  const endpoint = await getEndpointById({ id: params.id });
+  const endpoint = await getEndpointById({ id });
   const { data: endpointData, serverError } = endpoint || {};
 
   // check for errors
@@ -45,9 +51,9 @@ export default async function Page({ params }: { params: { id: string } }) {
           </BreadcrumbItem>
           <BreadcrumbSeparator />
           <BreadcrumbItem>
-            <Link href={`/endpoints/${params.id}`}>
+            <Link href={`/endpoints/${id}`}>
               <BreadcrumbPage className="px-2 py-1 bg-accent rounded-sm">
-                {params.id}
+                {id}
               </BreadcrumbPage>
             </Link>
           </BreadcrumbItem>
@@ -64,7 +70,7 @@ export default async function Page({ params }: { params: { id: string } }) {
       </Breadcrumb>
       <PageWrapper>
         <Header title={pageData?.title}>{pageData?.description}</Header>
-        <EditForm id={params.id} endpoint={endpointData} />
+        <EditForm id={id} endpoint={endpointData} />
       </PageWrapper>
     </>
   );

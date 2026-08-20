@@ -28,8 +28,14 @@ const pageData = {
   description: "Breakdown of this lead's data",
 };
 
-export default async function Page({ params }: { params: { id: string } }) {
-  const leadData = await getLeadData({ id: params.id });
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+
+  const leadData = await getLeadData({ id });
   const { data, serverError } = leadData || {};
 
   if (!data || serverError) {
@@ -40,7 +46,7 @@ export default async function Page({ params }: { params: { id: string } }) {
 
   return (
     <>
-      <Breadcrumbs leadId={params?.id} />
+      <Breadcrumbs leadId={id} />
       <PageWrapper>
         <Header title={pageData?.title}>{pageData?.description}</Header>
         <Table className="not-prose">

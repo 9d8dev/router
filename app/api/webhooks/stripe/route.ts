@@ -13,7 +13,7 @@ const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 export async function POST(request: Request) {
   try {
     const body = await request.text();
-    const signature = headers().get("stripe-signature")!;
+    const signature = (await headers()).get("stripe-signature")!;
 
     // Verify the webhook signature
     const event = stripe.webhooks.constructEvent(
