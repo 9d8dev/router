@@ -9,6 +9,7 @@ import validator from "validator";
  * 1. add a key value pair in 'validationOptions' of the new validation type
  * 2. Add a zod schema definition in the 'validations' object in this file
  * 3. If necessary, add respective logic to correct / cast the type in the 'convertToCorrectTypes' function
+ * 4. Add the normalized name of the validation type in the 'normalizedValidationOption' object
  */
 export const validationOptions: { name: ValidationType }[] = [
   { name: "phone" },
@@ -20,6 +21,23 @@ export const validationOptions: { name: ValidationType }[] = [
   { name: "url" },
   { name: "zip_code" },
 ];
+
+/**
+ * The normalized validation types available
+ * 
+ * Add a new entry to this when adding a new validation option to the 'validationOptions' array
+ */
+
+export const normalizedValidationOption = {
+  phone: "Phone Number",
+  email: "E-Mail Address",
+  string: "String",
+  number: "Number",
+  date: "Date",
+  boolean: "Boolean",
+  url: "URL",
+  zip_code: "Zip Code",
+}
 
 /**
  * Zod validations for each validation type

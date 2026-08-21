@@ -7,7 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { useFieldArray, useForm } from "react-hook-form";
 
-import { validationOptions } from "@/lib/validation";
+import { normalizedValidationOption, validationOptions } from "@/lib/validation";
 import { createEndpointFormSchema as formSchema } from "@/lib/data/validations";
 
 // next imports
@@ -136,7 +136,7 @@ export default function CreateForm() {
                         <SelectContent>
                           {validationOptions.map((type, index: number) => (
                             <SelectItem key={index} value={type.name}>
-                              {type.name}
+                              {normalizedValidationOption[type.name]}
                             </SelectItem>
                           ))}
                         </SelectContent>

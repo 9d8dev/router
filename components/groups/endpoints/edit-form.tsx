@@ -8,7 +8,7 @@ import * as z from "zod";
 import { useFieldArray, useForm } from "react-hook-form";
 import { updateEndpointFormSchema as formSchema } from "@/lib/data/validations";
 
-import { validationOptions } from "@/lib/validation";
+import { normalizedValidationOption, validationOptions } from "@/lib/validation";
 
 // next imports
 import { useRouter } from "next/navigation";
@@ -143,7 +143,7 @@ export default function EditForm({
                         <SelectContent>
                           {validationOptions.map((type, index: number) => (
                             <SelectItem key={index} value={type.name}>
-                              {type.name}
+                              {normalizedValidationOption[type.name]}
                             </SelectItem>
                           ))}
                         </SelectContent>
