@@ -1,0 +1,155 @@
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import { getPublishedForm } from "@/lib/data/forms";
+import {
+  acceptLead,
+  LeadCapacityError,
+  LeadEndpointError,
+  LeadValidationError,
+} from "@/lib/forms/lead-acceptance";
+import { requestOrigin } from "@/lib/forms/origins";
+import { isApprovedFormOrigin, publicCorsHeaders } from "@/lib/forms/public-access";
+import { enforceFormRateLimit, FormRateLimitError } from "@/lib/forms/rate-limit";
+import { verifySubmissionToken } from "@/lib/forms/submission-token";
+import { publicFormsEnabled } from "@/lib/forms/feature-flags";
+
+const MAX_BODY_BYTES = 64 * 1024;
+const inputSchema = z.object({
+  values: z.record(z.unknown()),
+  submitToken: z.string().min(1),
+  website: z.string().max(500).optional(),
+});
+
+function clientIp(request: Request): string {
+  return (
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    request.headers.get("x-real-ip") ||
+    "unknown"
+  );
+}
+
+async function readBody(request: Request): Promise<unknown> {
+  const declaredLength = Number(request.headers.get("content-length") ?? 0);
+  if (declaredLength > MAX_BODY_BYTES) throw new Error("payload_too_large");
+  const text = await request.text();
+  if (Buffer.byteLength(text, "utf8") > MAX_BODY_BYTES) {
+    throw new Error("payload_too_large");
+  }
+  return JSON.parse(text);
+}
+
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ publicId: string }> }
+) {
+  if (!publicFormsEnabled()) {
+    return NextResponse.json({ error: "form_not_found" }, { status: 404 });
+  }
+  const { publicId } = await params;
+  const origin = requestOrigin(request);
+  let parsed: z.infer<typeof inputSchema>;
+  try {
+    parsed = inputSchema.parse(await readBody(request));
+  } catch (error) {
+    const status = error instanceof Error && error.message === "payload_too_large" ? 413 : 400;
+    return NextResponse.json({ error: status === 413 ? "payload_too_large" : "invalid_request" }, { status });
+  }
+
+  let token;
+  try {
+    token = verifySubmissionToken(parsed.submitToken);
+  } catch (error) {
+    return NextResponse.json(
+      { error: "invalid_submit_token", message: error instanceof Error ? error.message : undefined },
+      { status: 401 }
+    );
+  }
+
+  if (token.publicId !== publicId || (token.origin && token.origin !== origin)) {
+    return NextResponse.json({ error: "invalid_submit_token" }, { status: 401 });
+  }
+  if (token.placement !== "hosted") {
+    if (!origin) return NextResponse.json({ error: "origin_not_approved" }, { status: 403 });
+    const approved = await isApprovedFormOrigin({
+      publicId,
+      origin,
+      placement: token.placement,
+    });
+    if (!approved) return NextResponse.json({ error: "origin_not_approved" }, { status: 403 });
+  }
+
+  const form = await getPublishedForm(publicId);
+  if (!form) return NextResponse.json({ error: "form_not_found" }, { status: 404 });
+  const corsHeaders = publicCorsHeaders(origin, Boolean(origin));
+
+  // Honeypot submissions receive a neutral success but never create a lead.
+  // Validate the signed session and origin first so cross-origin clients still
+  // receive the same CORS boundary as a real submission.
+  if (parsed.website) {
+    return NextResponse.json(
+      {
+        leadId: "accepted",
+        completion: { type: "message", message: "Thanks." },
+      },
+      { headers: corsHeaders }
+    );
+  }
+
+  try {
+    await enforceFormRateLimit({ formId: form.id, ip: clientIp(request) });
+    const result = await acceptLead({
+      publicId,
+      values: parsed.values,
+      placement: token.placement,
+    });
+    return NextResponse.json(
+      { leadId: result.leadId, completion: result.completion },
+      { headers: corsHeaders }
+    );
+  } catch (error) {
+    if (error instanceof LeadValidationError) {
+      return NextResponse.json(
+        { error: "validation_failed", fields: error.fieldErrors },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+    if (error instanceof LeadCapacityError) {
+      return NextResponse.json(
+        { error: "monthly_capacity_reached", capacity: error.capacity },
+        { status: 429, headers: corsHeaders }
+      );
+    }
+    if (error instanceof FormRateLimitError) {
+      corsHeaders.set("Retry-After", String(error.retryAfter));
+      return NextResponse.json(
+        { error: "rate_limited", retryAfter: error.retryAfter },
+        { status: 429, headers: corsHeaders }
+      );
+    }
+    if (error instanceof LeadEndpointError) {
+      return NextResponse.json(
+        { error: error.status === 404 ? "form_not_found" : "form_disabled" },
+        { status: error.status, headers: corsHeaders }
+      );
+    }
+    console.error(error);
+    return NextResponse.json({ error: "internal_error" }, { status: 500, headers: corsHeaders });
+  }
+}
+
+export async function OPTIONS(
+  request: Request,
+  { params }: { params: Promise<{ publicId: string }> }
+) {
+  if (!publicFormsEnabled()) return new NextResponse(null, { status: 404 });
+  const { publicId } = await params;
+  const origin = requestOrigin(request);
+  const approved = origin
+    ? (await isApprovedFormOrigin({ publicId, origin, placement: "embed" })) ||
+      (await isApprovedFormOrigin({ publicId, origin, placement: "wordpress" }))
+    : false;
+  return new NextResponse(null, {
+    status: approved ? 204 : 403,
+    headers: publicCorsHeaders(origin, approved),
+  });
+}

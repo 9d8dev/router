@@ -9,7 +9,17 @@ export const getLeadDataSchema = z.object({
 });
 
 const ValidationType = z.enum(
-  ["phone", "email", "string", "number", "date", "boolean", "url", "zip_code"],
+  [
+    "phone",
+    "email",
+    "string",
+    "number",
+    "date",
+    "boolean",
+    "url",
+    "zip_code",
+    "string_array",
+  ],
   {
     errorMap: () => ({ message: "Please select a valid field type." }),
   }

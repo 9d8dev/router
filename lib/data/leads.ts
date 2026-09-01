@@ -1,6 +1,6 @@
 "use server";
 
-import { leads, endpoints } from "../db/schema";
+import { leads, endpoints, forms } from "../db/schema";
 import { eq, desc, and } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "../db";
@@ -54,6 +54,9 @@ export const getLeads = authenticatedAction.action(
       updatedAt: lead.lead.updatedAt,
       endpointId: lead.endpoint?.id as string,
       endpoint: lead.endpoint?.name || undefined,
+      formId: lead.lead.formId,
+      formRevision: lead.lead.formRevision,
+      placement: lead.lead.placement,
     }));
 
     return data;
@@ -114,6 +117,23 @@ export const getLeadsByEndpoint = authenticatedAction
       .where(eq(leads.endpointId, id));
 
     return { leadData, schema: endpoint[0].schema };
+  });
+
+export const getLeadsByForm = authenticatedAction
+  .schema(z.object({ id: z.string() }))
+  .action(async ({ parsedInput: { id }, ctx: { userId } }) => {
+    const [ownedForm] = await db
+      .select({ id: forms.id, endpointId: forms.endpointId })
+      .from(forms)
+      .where(and(eq(forms.id, id), eq(forms.userId, userId)))
+      .limit(1);
+    if (!ownedForm) throw new Error("You are not authorized for this action.");
+
+    return db
+      .select()
+      .from(leads)
+      .where(eq(leads.formId, ownedForm.id))
+      .orderBy(desc(leads.createdAt));
   });
 
 /**

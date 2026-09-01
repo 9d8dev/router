@@ -1,0 +1,1 @@
+ALTER TABLE "user" ADD COLUMN "stripeCancelAtPeriodEnd" boolean DEFAULT false NOT NULL;

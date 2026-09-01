@@ -38,3 +38,6 @@ next-env.d.ts
 
 .vscode
 .zshrc
+
+# generated WordPress release artifacts (the public release ZIP is tracked)
+/integrations/wordpress/dist/

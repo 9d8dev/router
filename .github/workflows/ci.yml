@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test:unit
+      - name: Credential-free production build
+        run: pnpm build
+        env:
+          AUTH_SECRET: credential-free-build-secret-for-ci-only
+          FORM_SUBMISSION_SECRET: credential-free-form-secret-for-ci-only
+          FORM_RATE_LIMIT_SECRET: credential-free-rate-secret-for-ci-only
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: router_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Apply forward migrations
+        env:
+          PGURL: postgresql://postgres:postgres@localhost:5432/router_test
+        run: |
+          for migration in lib/db/drizzle/*.sql; do
+            psql "$PGURL" -v ON_ERROR_STOP=1 -f "$migration"
+          done
+      - run: pnpm test:db
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/router_test
+
+  wordpress:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "7.4"
+      - run: chmod +x integrations/wordpress/check.sh integrations/wordpress/package.sh
+      - run: integrations/wordpress/check.sh

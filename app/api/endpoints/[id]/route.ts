@@ -1,315 +1,127 @@
 import { NextResponse } from "next/server";
-import {
-  convertToCorrectTypes,
-  generateDynamicSchema,
-  validateAndParseData,
-} from "@/lib/validation";
-import { headers } from "next/headers";
-import { createLead } from "@/lib/data/leads";
-import { createLog } from "@/lib/data/logs";
-import { getErrorMessage } from "@/lib/helpers/error-message";
 import { constructBodyFromURLParameters } from "@/lib/helpers/construct-body";
+import { convertToCorrectTypes } from "@/lib/validation";
 import { getPostingEndpointById } from "@/lib/data/endpoints";
 import {
-  incrementLeadCount,
-  getUserPlan,
-  getLeadCount,
-} from "@/lib/data/users";
+  acceptLead,
+  LeadCapacityError,
+  LeadEndpointError,
+  LeadValidationError,
+} from "@/lib/forms/lead-acceptance";
 
-/**
- * API route for posting a lead using POST
- */
+const MAX_BODY_BYTES = 64 * 1024;
+
+function errorResponse(error: unknown): NextResponse {
+  if (error instanceof LeadValidationError) {
+    return NextResponse.json(
+      { error: "validation_failed", fields: error.fieldErrors },
+      { status: 400 }
+    );
+  }
+  if (error instanceof LeadCapacityError) {
+    return NextResponse.json(
+      { error: "monthly_capacity_reached", capacity: error.capacity },
+      { status: 429 }
+    );
+  }
+  if (error instanceof LeadEndpointError) {
+    return NextResponse.json(
+      {
+        error: error.status === 404 ? "not_found" : "endpoint_disabled",
+        message: error.message,
+      },
+      { status: error.status }
+    );
+  }
+  console.error(error);
+  return NextResponse.json({ error: "internal_error" }, { status: 500 });
+}
+
+async function readJsonBody(request: Request): Promise<unknown> {
+  const declaredLength = Number(request.headers.get("content-length") ?? 0);
+  if (declaredLength > MAX_BODY_BYTES) {
+    throw new Response("Payload too large", { status: 413 });
+  }
+  const body = await request.text();
+  if (Buffer.byteLength(body, "utf8") > MAX_BODY_BYTES) {
+    throw new Response("Payload too large", { status: 413 });
+  }
+  return JSON.parse(body);
+}
+
+/** Legacy bearer-token endpoint. Its URL and authentication contract are unchanged. */
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const authorization = request.headers.get("authorization");
+  if (!authorization?.startsWith("Bearer ")) {
+    return NextResponse.json(
+      { message: "Unauthorized. No valid bearer token provided." },
+      { status: 401 }
+    );
+  }
+
+  const endpoint = await getPostingEndpointById(id);
+  if (!endpoint) {
+    return NextResponse.json({ message: "Endpoint not found." }, { status: 404 });
+  }
+  if (endpoint.token !== authorization.slice("Bearer ".length)) {
+    return NextResponse.json(
+      { message: "Unauthorized. Invalid token provided." },
+      { status: 401 }
+    );
+  }
 
   try {
-    const headersList = await headers();
-    const authorization = headersList.get("authorization");
-
-    if (!authorization || !authorization.startsWith("Bearer ")) {
-      return NextResponse.json(
-        { message: "Unauthorized. No valid bearer token provided." },
-        { status: 401 }
-      );
+    const values = await readJsonBody(request);
+    const result = await acceptLead({
+      endpointId: id,
+      values,
+      placement: "headless",
+    });
+    return NextResponse.json({ success: true, id: result.leadId });
+  } catch (error) {
+    if (error instanceof Response) return error;
+    if (error instanceof SyntaxError) {
+      return NextResponse.json({ error: "invalid_json" }, { status: 400 });
     }
-
-    const token = authorization.split(" ")[1];
-    const data = await request.json();
-    const endpoint = await getPostingEndpointById(id);
-
-    if (!endpoint)
-      return NextResponse.json(
-        { message: "Endpoint not found." },
-        { status: 404 }
-      );
-
-    if (endpoint.token !== token) {
-      return NextResponse.json(
-        { message: "Unauthorized. Invalid token provided." },
-        { status: 401 }
-      );
-    }
-
-    if (!endpoint.enabled) {
-      return NextResponse.json(
-        { message: "Endpoint is disabled." },
-        { status: 403 }
-      );
-    }
-
-    const plan = await getUserPlan(id);
-    const leadCount = await getLeadCount(id);
-
-    let leadLimit: number;
-    switch (plan) {
-      case "free":
-        leadLimit = 100;
-        break;
-      case "lite":
-        leadLimit = 1000;
-        break;
-      case "pro":
-        leadLimit = 10000;
-        break;
-      case "business":
-        leadLimit = 50000;
-        break;
-      case "enterprise":
-        leadLimit = 999999;
-        break;
-      default:
-        leadLimit = 100; // Fallback to free tier limit
-    }
-
-    if (leadCount >= leadLimit) {
-      return NextResponse.json(
-        { message: "Lead limit reached." },
-        { status: 429 }
-      );
-    }
-
-    const schema = endpoint?.schema as GeneralSchema[];
-    const dynamicSchema = generateDynamicSchema(schema);
-    const parsedData = validateAndParseData(dynamicSchema, data);
-
-    if (!parsedData.success) {
-      createLog(
-        "error",
-        "http",
-        JSON.stringify(parsedData.error.format()),
-        endpoint.id
-      );
-
-      return NextResponse.json(
-        { errors: parsedData.error.format() },
-        { status: 400 }
-      );
-    }
-
-    const leadId = await createLead(endpoint.id, parsedData.data);
-
-    await createLog("success", "http", leadId, endpoint.id);
-    await incrementLeadCount(id);
-
-    // webhook posting -- eventually make this a background job
-    if (endpoint.webhookEnabled && endpoint.webhook) {
-      // Only wait 3 second(s) for a response
-      const webhookController = new AbortController();
-      const webhookTimeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(async () => {
-          // create a log of the timeout error
-          await createLog("error", "webhook", "Webhook timed out.", id);
-          webhookController.abort();
-          reject(new Error("Request timed out"));
-        }, 3000);
-      });
-      const webhookFetchPromise: Promise<Response> = fetch(endpoint.webhook, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(parsedData.data),
-        signal: webhookController.signal,
-      });
-      const webhookResponse = await Promise.race([
-        webhookFetchPromise,
-        webhookTimeoutPromise,
-      ]);
-
-      if (!webhookResponse.ok) {
-        const contentType = webhookResponse.headers.get("Content-Type");
-        let errorData;
-        if (contentType && contentType.includes("application/json")) {
-          errorData = await webhookResponse.json();
-        } else if (contentType && contentType.includes("text")) {
-          errorData = await webhookResponse.text();
-        } else {
-          errorData = "Received non-text response";
-        }
-        await createLog("error", "webhook", errorData, id);
-      } else {
-        createLog(
-          "success",
-          "webhook",
-          `${endpoint.webhook} -> Webhook successful`,
-          id
-        );
-      }
-    }
-
-    return NextResponse.json({ success: true, id: leadId });
-  } catch (error: unknown) {
-    await createLog("error", "http", getErrorMessage(error), id);
-
-    console.error(error);
-
-    return NextResponse.json({ error: "An error occurred." }, { status: 500 });
+    return errorResponse(error);
   }
 }
 
-/**
- * API route for posting a lead using GET
- *
- * Only used when the user is posting via HTML form element
- */
+/** Compatibility route for existing native HTML forms. */
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const endpoint = await getPostingEndpointById(id);
+  if (!endpoint) {
+    return NextResponse.json({ message: "Endpoint not found." }, { status: 404 });
+  }
+
+  const referer = request.headers.get("referer");
+  const rawValues = constructBodyFromURLParameters(
+    new URL(request.url).searchParams
+  );
+  const values = convertToCorrectTypes(
+    rawValues,
+    endpoint.schema as GeneralSchema[]
+  );
 
   try {
-    const headersList = await headers();
-    const referer = headersList.get("referer");
-    const { searchParams } = new URL(request.url);
-
-    const endpoint = await getPostingEndpointById(id);
-
-    if (!endpoint) {
-      return NextResponse.json(
-        { message: "Endpoint not found." },
-        { status: 404 }
-      );
-    }
-
-    if (!endpoint.enabled) {
-      return NextResponse.json(
-        { message: "Endpoint is disabled." },
-        { status: 403 }
-      );
-    }
-
-    const plan = await getUserPlan(id);
-    const leadCount = await getLeadCount(id);
-
-    let leadLimit: number;
-    switch (plan) {
-      case "free":
-        leadLimit = 100;
-        break;
-      case "lite":
-        leadLimit = 1000;
-        break;
-      case "pro":
-        leadLimit = 10000;
-        break;
-      case "business":
-        leadLimit = 50000;
-        break;
-      case "enterprise":
-        leadLimit = 999999;
-        break;
-      default:
-        leadLimit = 100; // Fallback to free tier limit
-    }
-
-    if (leadCount >= leadLimit) {
-      return NextResponse.json(
-        { message: "Lead limit reached." },
-        { status: 429 }
-      );
-    }
-
-    const rawData = constructBodyFromURLParameters(searchParams);
-    const schema = endpoint?.schema as GeneralSchema[];
-    const data = convertToCorrectTypes(rawData, schema);
-    const dynamicSchema = generateDynamicSchema(schema);
-    const parsedData = validateAndParseData(dynamicSchema, data);
-
-    if (!parsedData.success) {
-      createLog(
-        "error",
-        "http",
-        JSON.stringify(parsedData.error.format()),
-        endpoint.id
-      );
-
-      return NextResponse.redirect(
-        new URL(endpoint?.failUrl || referer || "/fail")
-      );
-    }
-
-    const leadId = await createLead(endpoint.id, parsedData.data);
-
-    await createLog("success", "http", leadId, endpoint.id);
-    await incrementLeadCount(id);
-
-    // webhook posting -- eventually make this a background job
-    if (endpoint.webhookEnabled && endpoint.webhook) {
-      // Only wait 3 second(s) for a response
-      const webhookController = new AbortController();
-      const webhookTimeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(async () => {
-          await createLog("error", "webhook", "Webhook timed out.", id);
-          webhookController.abort();
-          reject(new Error("Request timed out"));
-        }, 3000);
-      });
-      const webhookFetchPromise: Promise<Response> = fetch(endpoint.webhook, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(parsedData.data),
-        signal: webhookController.signal,
-      });
-      const webhookResponse = await Promise.race([
-        webhookFetchPromise,
-        webhookTimeoutPromise,
-      ]);
-
-      if (!webhookResponse.ok) {
-        const contentType = webhookResponse.headers.get("Content-Type");
-        let errorData;
-        if (contentType && contentType.includes("application/json")) {
-          errorData = await webhookResponse.json();
-        } else if (contentType && contentType.includes("text")) {
-          errorData = await webhookResponse.text();
-        } else {
-          errorData = "Received non-text response";
-        }
-        await createLog("error", "webhook", errorData, id);
-      } else {
-        createLog(
-          "success",
-          "webhook",
-          `${endpoint.webhook} -> Webhook successful`,
-          id
-        );
-      }
-    }
-
+    await acceptLead({ endpointId: id, values, placement: "legacy_html" });
     return NextResponse.redirect(
-      new URL(endpoint?.successUrl || referer || "/success")
+      new URL(endpoint.successUrl || referer || "/success", request.url)
     );
-  } catch (error: unknown) {
-    await createLog("error", "http", getErrorMessage(error), id);
-
-    console.error(error);
-
-    return NextResponse.json({ error: "An error occurred." }, { status: 500 });
+  } catch (error) {
+    if (error instanceof LeadValidationError) {
+      return NextResponse.redirect(
+        new URL(endpoint.failUrl || referer || "/fail", request.url)
+      );
+    }
+    return errorResponse(error);
   }
 }

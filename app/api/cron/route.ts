@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { clearLeadCount } from "@/lib/data/users";
+import { pruneFormRateBuckets } from "@/lib/forms/rate-limit";
 
 /**
  * Cron job to clear lead count run through Vercel
@@ -18,6 +19,7 @@ export async function GET(request: NextRequest) {
   }
 
   await clearLeadCount();
+  const prunedRateBuckets = await pruneFormRateBuckets();
 
-  return Response.json({ success: true });
+  return Response.json({ success: true, prunedRateBuckets });
 }

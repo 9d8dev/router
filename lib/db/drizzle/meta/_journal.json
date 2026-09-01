@@ -43,6 +43,41 @@
       "when": 1735599989929,
       "tag": "0005_fine_sersi",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788298643984,
+      "tag": "0006_router_forms_mvp",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788298745208,
+      "tag": "0007_form_attachment_provenance",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788300072107,
+      "tag": "0008_stripe_migration_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788300476416,
+      "tag": "0009_form_origin_kind_uniqueness",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788300568939,
+      "tag": "0010_placement_first_lead_analytics",
+      "breakpoints": true
     }
   ]
 }

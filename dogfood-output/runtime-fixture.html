@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Router Forms Runtime Verification</title>
+    <style>
+      :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+      body { background: #f3f2ed; color: #1d1d1a; margin: 0; }
+      header { margin: 0 auto; max-width: 1120px; padding: 42px 24px 20px; }
+      header p { color: #686861; margin: 8px 0 0; }
+      main { display: grid; gap: 24px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0 auto; max-width: 1120px; padding: 20px 24px 64px; }
+      article { --router-form-accent: #1d1d1a; --router-form-accent-contrast: #fff; --router-form-border-color: rgba(29,29,26,.2); --router-form-muted-color: rgba(29,29,26,.62); --router-form-surface: #fff; background: white; border: 1px solid rgba(29,29,26,.12); border-radius: 18px; box-shadow: 0 20px 55px rgba(29,29,26,.07); padding: 34px; }
+      @media (max-width: 760px) { header { padding-top: 28px; } main { grid-template-columns: 1fr; padding-inline: 16px; } article { padding: 24px; } }
+    </style>
+  </head>
+  <body>
+    <header><h1>Runtime verification</h1><p>Two independently mounted, theme-inheriting Router forms.</p></header>
+    <main>
+      <article><div id="contact"></div></article>
+      <article><div id="feedback"></div></article>
+    </main>
+    <script src="/public/embed/v1.js"></script>
+    <script>
+      const completion = { type: "message", message: "Thanks — your response has been received." };
+      const contact = { version: 1, title: "Contact our team", description: "We usually reply within one business day.", submitLabel: "Send message", completion, fields: [
+        { id: "name", key: "name", kind: "text", label: "Name", required: true, placeholder: "Ada Lovelace" },
+        { id: "email", key: "email", kind: "email", label: "Work email", required: true, placeholder: "ada@example.com" },
+        { id: "topic", key: "topic", kind: "select", label: "What can we help with?", required: true, options: [{ id: "sales", label: "Sales", value: "sales" }, { id: "support", label: "Support", value: "support" }] },
+        { id: "message", key: "message", kind: "textarea", label: "Message", required: true, rows: 5, helpText: "Please avoid including sensitive information." }
+      ] };
+      const feedback = { version: 1, title: "Share feedback", description: "Help us make Router better.", submitLabel: "Send feedback", completion, fields: [
+        { id: "score", key: "score", kind: "slider", label: "Experience score", required: true, defaultValue: 7, validation: { min: 1, max: 10, step: 1 } },
+        { id: "recommend", key: "recommend", kind: "yes-no", label: "Would you recommend Router?", required: true },
+        { id: "topics", key: "topics", kind: "checkbox-group", label: "What worked well?", required: false, options: [{ id: "speed", label: "Speed", value: "speed" }, { id: "design", label: "Design", value: "design" }, { id: "routing", label: "Lead routing", value: "routing" }] },
+        { id: "notes", key: "notes", kind: "textarea", label: "Anything else?", required: false, rows: 4 }
+      ] };
+      window.RouterFormsV1.mount(document.querySelector("#contact"), { definition: contact, publicId: "contact", preview: true });
+      window.RouterFormsV1.mount(document.querySelector("#feedback"), { definition: feedback, publicId: "feedback", preview: true });
+    </script>
+  </body>
+</html>

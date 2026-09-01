@@ -34,7 +34,7 @@ export const Usage = ({
   };
 
   const daysLeft = calculateDaysLeft();
-  const remaining = totalUsage - used;
+  const remaining = Math.max(0, totalUsage - used);
   const usagePercentage = (used / totalUsage) * 100;
 
   return (
@@ -56,10 +56,12 @@ export const Usage = ({
               {plan}
             </Badge>
           </div>
-          <Progress value={usagePercentage} className="h-2" />
+          <Progress value={Math.min(100, usagePercentage)} className="h-2" />
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">
-              {formatNumber(remaining)} leads remaining
+              {used >= totalUsage
+                ? `Grace capacity: ${formatNumber(Math.max(0, Math.round(totalUsage * 1.1) - used))} leads remaining`
+                : `${formatNumber(remaining)} leads remaining`}
             </p>
             <p className="flex items-center space-x-1 text-xs">
               <CircleAlert className="h-3 w-3 text-green-500" />

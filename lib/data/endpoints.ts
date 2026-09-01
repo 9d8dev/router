@@ -2,10 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { db, Endpoint } from "../db";
-import { endpoints } from "../db/schema";
+import { endpoints, forms } from "../db/schema";
 import { eq, desc, and } from "drizzle-orm";
 import { getErrorMessage } from "@/lib/helpers/error-message";
-import { authenticatedAction } from "./safe-action";
+import { ActionError, authenticatedAction } from "./safe-action";
 import { z } from "zod";
 import {
   createEndpointFormSchema,
@@ -65,6 +65,17 @@ export const getPostingEndpointById = async (id: string) => {
 export const deleteEndpoint = authenticatedAction
   .schema(z.object({ id: z.string() }))
   .action(async ({ parsedInput: { id }, ctx: { userId } }) => {
+    const [attachedForm] = await db
+      .select({ id: forms.id })
+      .from(forms)
+      .innerJoin(endpoints, eq(forms.endpointId, endpoints.id))
+      .where(and(eq(forms.endpointId, id), eq(endpoints.userId, userId)))
+      .limit(1);
+    if (attachedForm) {
+      throw new ActionError(
+        "Remove the attached form before deleting this endpoint. Existing leads are preserved when the form is removed."
+      );
+    }
     await db
       .delete(endpoints)
       .where(and(eq(endpoints.id, id), eq(endpoints.userId, userId)));

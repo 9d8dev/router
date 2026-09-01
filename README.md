@@ -6,6 +6,8 @@
 
 This is a simple router for forms. [Watch a Demo](https://x.com/youngbloodcyb/status/1831808232966516972)
 
+Router supports optional first-class forms without changing its headless endpoint contract. Forms can be published on `forms.router.so`, embedded in an approved website, or rendered through the included WordPress block and shortcode. See [the Forms implementation notes](docs/forms/README.md) and [release runbook](docs/forms/release-runbook.md).
+
 # Self-Hosting router
 
 ## Prerequisites

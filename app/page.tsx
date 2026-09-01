@@ -12,6 +12,7 @@ import { DataTable } from "@/components/groups/leads/data-table";
 import { columns } from "@/components/groups/leads/columns";
 import { getUsageForUser } from "@/lib/data/users";
 import { Usage } from "@/components/parts/usage";
+import { getEntitlement } from "@/lib/forms/entitlements";
 
 const pageData = {
   name: "Dashboard",
@@ -56,26 +57,7 @@ export default async function Page() {
   const recentLeads = leadsData.slice(0, 5);
 
   // get the lead limit for the user's plan
-  let leadLimit: number;
-  switch (usageData?.plan) {
-    case "free":
-      leadLimit = 100;
-      break;
-    case "lite":
-      leadLimit = 1000;
-      break;
-    case "pro":
-      leadLimit = 10000;
-      break;
-    case "business":
-      leadLimit = 50000;
-      break;
-    case "enterprise":
-      leadLimit = 999999;
-      break;
-    default:
-      leadLimit = 100; // Fallback to free tier limit
-  }
+  const leadLimit = getEntitlement(usageData.plan).monthlyLeads;
 
   return (
     <>
@@ -89,7 +71,7 @@ export default async function Page() {
               usageData.plan === "enterprise" ? "col-span-3" : "col-span-2"
             }`}
           />
-          {usageData.plan !== "enterprise" && (
+          {leadLimit !== null && (
             <Usage
               totalUsage={leadLimit}
               used={usageData.leadCount}

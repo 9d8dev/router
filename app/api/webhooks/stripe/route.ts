@@ -1,152 +1,140 @@
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { Stripe } from "stripe";
-import { db } from "@/lib/db";
-import { users } from "@/lib/db/schema";
+import type Stripe from "stripe";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { STRIPE_PLANS } from "@/lib/constants/stripe";
+import { db } from "@/lib/db";
+import { users } from "@/lib/db/schema";
+import {
+  planForNewPrice,
+} from "@/lib/constants/stripe";
+import { getStripe } from "@/lib/utils/stripe-client";
+import { getUserPublishedFormIds } from "@/lib/data/forms";
+import { invalidatePublishedForm } from "@/lib/forms/cache";
+import {
+  endedSubscriptionState,
+  failedPaymentState,
+  subscriptionEntitlementState,
+} from "@/lib/forms/stripe-subscription-state";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
+async function updateSubscription(subscription: Stripe.Subscription) {
+  const priceId = subscription.items.data[0]?.price.id;
+  if (!priceId) throw new Error("Subscription has no price.");
+  const state = subscriptionEntitlementState({
+    priceId,
+    customerId: subscription.customer as string,
+    subscriptionId: subscription.id,
+    status: subscription.status,
+    currentPeriodEnd: subscription.current_period_end,
+    cancelAtPeriodEnd: subscription.cancel_at_period_end,
+  });
+
+  const userCondition = subscription.metadata.routerUserId
+    ? eq(users.id, subscription.metadata.routerUserId)
+    : eq(users.stripeCustomerId, subscription.customer as string);
+  const [updated] = await db
+    .update(users)
+    .set(state)
+    .where(userCondition)
+    .returning({ id: users.id });
+
+  if (updated) {
+    const publicIds = await getUserPublishedFormIds(updated.id);
+    publicIds.forEach(invalidatePublishedForm);
+  }
+}
 
 export async function POST(request: Request) {
   try {
-    const body = await request.text();
-    const signature = (await headers()).get("stripe-signature")!;
-
-    // Verify the webhook signature
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    const signature = (await headers()).get("stripe-signature");
+    if (!webhookSecret || !signature) {
+      return NextResponse.json(
+        { error: "Stripe webhook is not configured." },
+        { status: 503 }
+      );
+    }
+    const stripe = getStripe();
     const event = stripe.webhooks.constructEvent(
-      body,
+      await request.text(),
       signature,
       webhookSecret
     );
 
-    // Handle checkout session completion
     if (event.type === "checkout.session.completed") {
-      const session = event.data.object as Stripe.Checkout.Session;
-
-      // Get the price ID from the session
-      const lineItems = await stripe.checkout.sessions.listLineItems(
-        session.id
-      );
-      const priceId = lineItems.data[0].price?.id;
-
-      // Determine the plan based on price ID
-      let plan: "lite" | "pro" | "business";
-
-      // Get all possible price IDs for each plan
-      const priceIdToPlan = {
-        [STRIPE_PLANS.lite.monthlyPriceId.dev]: "lite",
-        [STRIPE_PLANS.lite.monthlyPriceId.prod]: "lite",
-        [STRIPE_PLANS.lite.yearlyPriceId.dev]: "lite",
-        [STRIPE_PLANS.lite.yearlyPriceId.prod]: "lite",
-        [STRIPE_PLANS.pro.monthlyPriceId.dev]: "pro",
-        [STRIPE_PLANS.pro.monthlyPriceId.prod]: "pro",
-        [STRIPE_PLANS.pro.yearlyPriceId.dev]: "pro",
-        [STRIPE_PLANS.pro.yearlyPriceId.prod]: "pro",
-        [STRIPE_PLANS.business.monthlyPriceId.dev]: "business",
-        [STRIPE_PLANS.business.monthlyPriceId.prod]: "business",
-        [STRIPE_PLANS.business.yearlyPriceId.dev]: "business",
-        [STRIPE_PLANS.business.yearlyPriceId.prod]: "business",
-      } as const;
-
-      plan = priceIdToPlan[priceId as keyof typeof priceIdToPlan];
-
-      if (!plan) {
-        console.error(`Invalid price ID: ${priceId}`);
-        throw new Error(`Invalid price ID: ${priceId}`);
-      }
-
-      const customerEmail = session.customer_email;
-      if (!customerEmail) {
-        throw new Error("No customer email found in session");
-      }
-
-      await db
+      const session = event.data.object;
+      const lineItems = await stripe.checkout.sessions.listLineItems(session.id);
+      const priceId = lineItems.data[0]?.price?.id;
+      const plan = priceId ? planForNewPrice(priceId) : null;
+      if (!plan) throw new Error("Checkout used an unrecognized or retired price.");
+      if (!session.customer_details?.email) throw new Error("Checkout has no customer email.");
+      const [updated] = await db
         .update(users)
         .set({
           plan,
           stripeCustomerId: session.customer as string,
+          stripeSubscriptionId: session.subscription as string,
+          legacyPriceMigrationRequired: false,
         })
-        .where(eq(users.email, customerEmail));
-    }
-
-    // Handle subscription updates
-    if (event.type === "customer.subscription.updated") {
-      const subscription = event.data.object as Stripe.Subscription;
-      const priceId = subscription.items.data[0].price.id;
-
-      // Determine the new plan based on price ID
-      let plan: "lite" | "pro" | "business";
-
-      // Get all possible price IDs for each plan
-      const priceIdToPlan = {
-        [STRIPE_PLANS.lite.monthlyPriceId.dev]: "lite",
-        [STRIPE_PLANS.lite.monthlyPriceId.prod]: "lite",
-        [STRIPE_PLANS.lite.yearlyPriceId.dev]: "lite",
-        [STRIPE_PLANS.lite.yearlyPriceId.prod]: "lite",
-        [STRIPE_PLANS.pro.monthlyPriceId.dev]: "pro",
-        [STRIPE_PLANS.pro.monthlyPriceId.prod]: "pro",
-        [STRIPE_PLANS.pro.yearlyPriceId.dev]: "pro",
-        [STRIPE_PLANS.pro.yearlyPriceId.prod]: "pro",
-        [STRIPE_PLANS.business.monthlyPriceId.dev]: "business",
-        [STRIPE_PLANS.business.monthlyPriceId.prod]: "business",
-        [STRIPE_PLANS.business.yearlyPriceId.dev]: "business",
-        [STRIPE_PLANS.business.yearlyPriceId.prod]: "business",
-      } as const;
-
-      plan = priceIdToPlan[priceId as keyof typeof priceIdToPlan];
-
-      if (!plan) {
-        console.error(`Invalid price ID: ${priceId}`);
-        throw new Error(`Invalid price ID: ${priceId}`);
+        .where(eq(users.email, session.customer_details.email))
+        .returning({ id: users.id });
+      if (updated) {
+        (await getUserPublishedFormIds(updated.id)).forEach(invalidatePublishedForm);
       }
-
-      await db
-        .update(users)
-        .set({ plan })
-        .where(eq(users.stripeCustomerId, subscription.customer as string));
     }
 
-    // Handle subscription deletions
+    if (
+      event.type === "customer.subscription.created" ||
+      event.type === "customer.subscription.updated"
+    ) {
+      await updateSubscription(event.data.object);
+    }
+
     if (event.type === "customer.subscription.deleted") {
-      const subscription = event.data.object as Stripe.Subscription;
+      const subscription = event.data.object;
+      const [updated] = await db
+        .update(users)
+        .set(endedSubscriptionState(subscription.status))
+        .where(eq(users.stripeCustomerId, subscription.customer as string))
+        .returning({ id: users.id });
+      if (updated) {
+        (await getUserPublishedFormIds(updated.id)).forEach(invalidatePublishedForm);
+      }
+    }
 
+    if (event.type === "invoice.payment_failed") {
+      const invoice = event.data.object;
       await db
         .update(users)
-        .set({ plan: "free" })
-        .where(eq(users.stripeCustomerId, subscription.customer as string));
+        .set(failedPaymentState())
+        .where(eq(users.stripeCustomerId, invoice.customer as string));
     }
 
-    // Handle failed payments
-    if (event.type === "invoice.payment_failed") {
-      const invoice = event.data.object as Stripe.Invoice;
-
-      // You might want to notify the user or take other actions
-      console.error(`Payment failed for customer ${invoice.customer}`);
-    }
-
-    // Handle customer deletion
     if (event.type === "customer.deleted") {
-      const customer = event.data.object as Stripe.Customer;
-
-      await db
+      const customer = event.data.object;
+      const [updated] = await db
         .update(users)
         .set({
           plan: "free",
           stripeCustomerId: null,
+          stripeSubscriptionId: null,
+          stripeSubscriptionStatus: null,
+          stripeCurrentPeriodEnd: null,
+          stripeCancelAtPeriodEnd: false,
+          legacyPriceMigrationRequired: false,
         })
-        .where(eq(users.stripeCustomerId, customer.id));
+        .where(eq(users.stripeCustomerId, customer.id))
+        .returning({ id: users.id });
+      if (updated) {
+        (await getUserPublishedFormIds(updated.id)).forEach(invalidatePublishedForm);
+      }
     }
 
     revalidatePath("/");
+    revalidatePath("/upgrade");
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Stripe webhook error:", error);
-    return NextResponse.json(
-      { error: "Webhook handler failed" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Webhook handler failed" }, { status: 400 });
   }
 }

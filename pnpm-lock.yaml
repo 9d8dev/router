@@ -160,7 +160,7 @@ importers:
         version: 3.6.0
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@types/pg@8.11.6)(@vercel/postgres@0.10.0(utf-8-validate@6.0.5))(pg@8.23.0)
+        version: 0.45.2(@types/pg@8.23.1)(@vercel/postgres@0.10.0(utf-8-validate@6.0.5))(pg@8.23.0)
       embla-carousel-react:
         specifier: ^8.6.0
         version: 8.6.0(react@19.2.8)
@@ -246,6 +246,9 @@ importers:
       '@types/node':
         specifier: ^24.10.6
         version: 24.13.3
+      '@types/pg':
+        specifier: ^8.15.5
+        version: 8.23.1
       '@types/react':
         specifier: ^19.2.18
         version: 19.2.18
@@ -2225,6 +2228,9 @@ packages:
   '@types/pg@8.11.6':
     resolution: {integrity: sha512-/2WmmBXHLsfRqzfHW7BNZ8SbYzE8OSk7i3WjFYvfgRHj7S1xj+16Je5fUKv3lVdVzk/zn9TXOqf+avFCFIE0yQ==}
 
+  '@types/pg@8.23.1':
+    resolution: {integrity: sha512-fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A==}
+
   '@types/react-dom@19.2.4':
     resolution: {integrity: sha512-Bsc+QHgp+P/F02XDzNCY9jnZNCUuLki36KT7VKrTXXLdHf+vHMNZnW1rVu5DNW/rCK+fya3DATySbLM4yhtKUw==}
     peerDependencies:
@@ -3847,9 +3853,6 @@ packages:
     resolution: {integrity: sha512-gKtPkFdQPU3DksooVLi9LsjZxrsBUZIpa+7aVx+LV5pNh0KzP4Zleud2po+ConrxbuXGBJ6Hfer6hdgpIBpBaw==}
     peerDependencies:
       pg: '>=8.0'
-
-  pg-protocol@1.10.0:
-    resolution: {integrity: sha512-IpdytjudNuLv8nhlHs/UrVBhU0e78J0oIS/0AVdTbWxSOkFUVdsHC/NrorO6nXsQNDTT1kzDSOMJubBQviX18Q==}
 
   pg-protocol@1.16.0:
     resolution: {integrity: sha512-sILXutLVjCLjcDuOmvhX5e2Z4cS5qG/6Bu3VkpFwdf/633ElGLpEh9bgmuI5I4sqKqkifQiGyiCcx1HdtrK7tg==}
@@ -6429,8 +6432,14 @@ snapshots:
   '@types/pg@8.11.6':
     dependencies:
       '@types/node': 24.13.3
-      pg-protocol: 1.10.0
+      pg-protocol: 1.16.0
       pg-types: 4.0.2
+
+  '@types/pg@8.23.1':
+    dependencies:
+      '@types/node': 24.13.3
+      pg-protocol: 1.16.0
+      pg-types: 2.2.0
 
   '@types/react-dom@19.2.4(@types/react@19.2.18)':
     dependencies:
@@ -7061,9 +7070,9 @@ snapshots:
       esbuild: 0.25.5
       tsx: 4.23.12
 
-  drizzle-orm@0.45.2(@types/pg@8.11.6)(@vercel/postgres@0.10.0(utf-8-validate@6.0.5))(pg@8.23.0):
+  drizzle-orm@0.45.2(@types/pg@8.23.1)(@vercel/postgres@0.10.0(utf-8-validate@6.0.5))(pg@8.23.0):
     optionalDependencies:
-      '@types/pg': 8.11.6
+      '@types/pg': 8.23.1
       '@vercel/postgres': 0.10.0(utf-8-validate@6.0.5)
       pg: 8.23.0
 
@@ -8180,8 +8189,6 @@ snapshots:
   pg-pool@3.14.0(pg@8.23.0):
     dependencies:
       pg: 8.23.0
-
-  pg-protocol@1.10.0: {}
 
   pg-protocol@1.16.0: {}
 

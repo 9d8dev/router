@@ -3,6 +3,7 @@ import { Header } from "@/components/parts/header";
 import { PageWrapper } from "@/components/parts/page-wrapper";
 import { PlanTiles } from "./plan-tiles";
 import { getUsageForUser } from "@/lib/data/users";
+import { notFound } from "next/navigation";
 
 const pageData = {
   name: "Upgrade",
@@ -13,6 +14,7 @@ const pageData = {
 export default async function Page() {
   const usage = await getUsageForUser();
   const { data: usageData, serverError: usageServerError } = usage || {};
+  if (!usageData || usageServerError) notFound();
 
   return (
     <>

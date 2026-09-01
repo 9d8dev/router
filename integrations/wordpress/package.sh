@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+OUTPUT_DIR="$SCRIPT_DIR/dist"
+mkdir -p "$OUTPUT_DIR"
+rm -f "$OUTPUT_DIR/router-forms.zip"
+cd "$SCRIPT_DIR"
+zip -qr "$OUTPUT_DIR/router-forms.zip" router-forms -x '*.DS_Store'
+echo "$OUTPUT_DIR/router-forms.zip"
