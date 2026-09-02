@@ -38,7 +38,7 @@ This runbook deliberately separates code proof, database migration, deployment, 
 
 ## 6. Billing migration gate
 
-- Create and archive the four new Stripe Prices, then configure their IDs in the app and allow those Prices in Billing Portal subscription updates. Set the Portal's proration behavior deliberately before customers can change plans.
+- Create and activate the four new Stripe Prices, then configure their IDs in the app and allow those Prices in Billing Portal subscription updates. Archive the legacy Prices only after verifying entitlement continuity, and set the Portal's proration behavior deliberately before customers can change plans.
 - Run `pnpm stripe:legacy-migration` without `--apply`; review every subscription in the dry-run output.
 - After explicit authorization, re-run with `--apply` and verify Stripe webhook readback records `cancel_at_period_end` and the period end for each affected user.
 - Send the approved customer communications from `legacy-customer-email-drafts.md` on the stated schedule.

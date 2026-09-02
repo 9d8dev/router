@@ -1,4 +1,5 @@
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const HOSTED_FORM_HOSTS = new Set(["forms.router.so", ...LOCAL_HOSTS]);
 
 export function normalizeOrigin(input: string): string {
   let url: URL;
@@ -24,8 +25,18 @@ export function requestOrigin(request: Request): string | null {
   const origin = request.headers.get("origin");
   if (!origin) return null;
   try {
-    return normalizeOrigin(origin);
+    const normalized = normalizeOrigin(origin);
+    return origin === normalized ? normalized : null;
   } catch {
     return null;
   }
+}
+
+export function isHostedFormRequest(request: Request): boolean {
+  const requestUrl = new URL(request.url);
+  const origin = requestOrigin(request);
+  return (
+    HOSTED_FORM_HOSTS.has(requestUrl.hostname) &&
+    origin === requestUrl.origin.toLowerCase()
+  );
 }

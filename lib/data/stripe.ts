@@ -9,6 +9,7 @@ import { db } from "../db";
 import { users } from "../db/schema";
 import { configuredPriceId } from "@/lib/constants/stripe";
 import { getStripe } from "@/lib/utils/stripe-client";
+import { stripeCheckoutMetadata } from "@/lib/forms/stripe-subscription-state";
 
 const createStripeSessionSchema = z.object({
   plan: z.enum(["pro", "business"]),
@@ -62,6 +63,7 @@ export const postStripeSession = authenticatedAction
       redirect(portal.url);
     }
 
+    const metadata = stripeCheckoutMetadata(userId, parsedInput.plan);
     const session = await stripe.checkout.sessions.create({
       line_items: [{ price: priceId, quantity: 1 }],
       mode: "subscription",
@@ -71,9 +73,9 @@ export const postStripeSession = authenticatedAction
       success_url: `${protocol}://${host}/upgrade?checkout=success`,
       cancel_url: `${protocol}://${host}/upgrade`,
       allow_promotion_codes: true,
-      metadata: { routerPlan: parsedInput.plan },
+      metadata,
       subscription_data: {
-        metadata: { routerUserId: userId, routerPlan: parsedInput.plan },
+        metadata,
       },
     });
     if (!session.url) throw new ActionError("Failed to create Stripe checkout session.");

@@ -169,8 +169,6 @@ async function completeEveryField(page: Page) {
 const placements = [
   { name: "hosted", placement: "hosted" as const, siteUrl: "https://forms.router.so/browser-form" },
   { name: "generic embed", placement: "embed" as const, siteUrl: "https://site.example/form" },
-  { name: "Gutenberg block", placement: "wordpress" as const, siteUrl: "https://wordpress-block.example/form" },
-  { name: "WordPress shortcode", placement: "wordpress" as const, siteUrl: "https://wordpress-shortcode.example/form" },
 ];
 
 for (const scenario of placements) {

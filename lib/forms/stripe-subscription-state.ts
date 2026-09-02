@@ -1,6 +1,7 @@
 import {
   LEGACY_STRIPE_PRICE_TO_PLAN,
   planForNewPrice,
+  type PurchasablePlan,
 } from "../constants/stripe";
 import type { RouterPlan } from "./entitlements";
 
@@ -18,6 +19,32 @@ export function shouldApplySubscriptionEvent(
   eventSubscriptionId: string
 ): boolean {
   return storedSubscriptionId === null || storedSubscriptionId === eventSubscriptionId;
+}
+
+export function shouldClearScheduledCancellation(input: {
+  priceId: string;
+  cancelAtPeriodEnd: boolean;
+  legacyMigrationRequired: boolean;
+}): boolean {
+  return (
+    input.legacyMigrationRequired &&
+    input.cancelAtPeriodEnd &&
+    planForNewPrice(input.priceId) !== null
+  );
+}
+
+export function invoiceSubscriptionId(
+  subscription: string | { id: string } | null | undefined
+): string | null {
+  if (typeof subscription === "string") return subscription;
+  return subscription?.id ?? null;
+}
+
+export function stripeCheckoutMetadata(
+  userId: string,
+  plan: PurchasablePlan
+): { routerUserId: string; routerPlan: PurchasablePlan } {
+  return { routerUserId: userId, routerPlan: plan };
 }
 
 export function subscriptionEntitlementState(

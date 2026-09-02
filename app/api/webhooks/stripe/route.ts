@@ -14,7 +14,9 @@ import { invalidatePublishedForm } from "@/lib/forms/cache";
 import {
   endedSubscriptionState,
   failedPaymentState,
+  invoiceSubscriptionId,
   shouldApplySubscriptionEvent,
+  shouldClearScheduledCancellation,
   subscriptionEntitlementState,
 } from "@/lib/forms/stripe-subscription-state";
 
@@ -23,7 +25,11 @@ async function subscriptionOwner(subscription: Stripe.Subscription) {
     ? eq(users.id, subscription.metadata.routerUserId)
     : eq(users.stripeCustomerId, subscription.customer as string);
   const [owner] = await db
-    .select({ id: users.id, stripeSubscriptionId: users.stripeSubscriptionId })
+    .select({
+      id: users.id,
+      stripeSubscriptionId: users.stripeSubscriptionId,
+      legacyPriceMigrationRequired: users.legacyPriceMigrationRequired,
+    })
     .from(users)
     .where(userCondition)
     .limit(1);
@@ -46,18 +52,35 @@ function currentSubscriptionCondition(userId: string, subscriptionId: string) {
   );
 }
 
-async function updateSubscription(subscription: Stripe.Subscription) {
+async function updateSubscription(
+  subscription: Stripe.Subscription,
+  stripe: Stripe
+) {
   const owner = await subscriptionOwner(subscription);
   if (!owner) return;
-  const priceId = subscription.items.data[0]?.price.id;
+  let currentSubscription = subscription;
+  let priceId = currentSubscription.items.data[0]?.price.id;
   if (!priceId) throw new Error("Subscription has no price.");
+  if (
+    shouldClearScheduledCancellation({
+      priceId,
+      cancelAtPeriodEnd: currentSubscription.cancel_at_period_end,
+      legacyMigrationRequired: owner.legacyPriceMigrationRequired,
+    })
+  ) {
+    currentSubscription = await stripe.subscriptions.update(subscription.id, {
+      cancel_at_period_end: false,
+    });
+    priceId = currentSubscription.items.data[0]?.price.id;
+    if (!priceId) throw new Error("Subscription has no price.");
+  }
   const state = subscriptionEntitlementState({
     priceId,
-    customerId: subscription.customer as string,
-    subscriptionId: subscription.id,
-    status: subscription.status,
-    currentPeriodEnd: subscription.current_period_end,
-    cancelAtPeriodEnd: subscription.cancel_at_period_end,
+    customerId: currentSubscription.customer as string,
+    subscriptionId: currentSubscription.id,
+    status: currentSubscription.status,
+    currentPeriodEnd: currentSubscription.current_period_end,
+    cancelAtPeriodEnd: currentSubscription.cancel_at_period_end,
   });
 
   const [updated] = await db
@@ -128,7 +151,7 @@ export async function POST(request: Request) {
       event.type === "customer.subscription.created" ||
       event.type === "customer.subscription.updated"
     ) {
-      await updateSubscription(event.data.object);
+      await updateSubscription(event.data.object, stripe);
     }
 
     if (event.type === "customer.subscription.deleted") {
@@ -149,10 +172,18 @@ export async function POST(request: Request) {
 
     if (event.type === "invoice.payment_failed") {
       const invoice = event.data.object;
-      await db
-        .update(users)
-        .set(failedPaymentState())
-        .where(eq(users.stripeCustomerId, invoice.customer as string));
+      const subscriptionId = invoiceSubscriptionId(invoice.subscription);
+      if (subscriptionId) {
+        await db
+          .update(users)
+          .set(failedPaymentState())
+          .where(
+            and(
+              eq(users.stripeCustomerId, invoice.customer as string),
+              eq(users.stripeSubscriptionId, subscriptionId)
+            )
+          );
+      }
     }
 
     if (event.type === "customer.deleted") {

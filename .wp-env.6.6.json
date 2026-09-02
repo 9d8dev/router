@@ -2,7 +2,10 @@
   "$schema": "https://schemas.wp.org/trunk/wp-env.json",
   "core": "WordPress/WordPress#6.6",
   "phpVersion": "7.4",
-  "plugins": ["./integrations/wordpress/router-forms"],
+  "plugins": [
+    "./integrations/wordpress/router-forms",
+    "./integrations/wordpress/test-fixtures/router-forms-test-api"
+  ],
   "testsEnvironment": false,
   "port": 8888
 }

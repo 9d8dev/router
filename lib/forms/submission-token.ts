@@ -5,7 +5,7 @@ export type FormPlacement = "hosted" | "embed" | "wordpress";
 type SubmissionTokenInput = {
   publicId: string;
   placement: FormPlacement;
-  origin?: string;
+  origin: string;
 };
 
 export type SubmissionTokenPayload = SubmissionTokenInput & {
@@ -46,7 +46,7 @@ export function createSubmissionToken(
     audience: "router-form-submission",
     publicId: input.publicId,
     placement: input.placement,
-    ...(input.origin ? { origin: input.origin } : {}),
+    origin: input.origin,
     issuedAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + 60 * 60 * 1_000).toISOString(),
     nonce: randomBytes(12).toString("base64url"),
@@ -85,6 +85,7 @@ export function verifySubmissionToken(
   if (
     payload.audience !== "router-form-submission" ||
     !payload.publicId ||
+    !payload.origin ||
     !["hosted", "embed", "wordpress"].includes(payload.placement)
   ) {
     throw new Error("Invalid submission token.");
@@ -96,4 +97,15 @@ export function verifySubmissionToken(
   }
 
   return payload;
+}
+
+export function submissionTokenMatchesRequest(
+  payload: SubmissionTokenPayload,
+  request: { publicId: string; origin: string | null }
+): boolean {
+  return (
+    payload.publicId === request.publicId &&
+    request.origin !== null &&
+    payload.origin === request.origin
+  );
 }

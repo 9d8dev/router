@@ -12,9 +12,10 @@
   var styleId = "router-forms-v1-styles";
   var mountSequence = 0;
 
-  function installStyles() {
-    if (document.getElementById(styleId)) return;
-    var style = document.createElement("style");
+  function installStyles(ownerDocument) {
+    var styleDocument = ownerDocument || document;
+    if (styleDocument.getElementById(styleId)) return;
+    var style = styleDocument.createElement("style");
     style.id = styleId;
     style.textContent = [
       ".router-form-v1{--rf-color:var(--router-form-color,currentColor);--rf-muted:var(--router-form-muted-color,color-mix(in srgb,currentColor 62%,transparent));--rf-border:var(--router-form-border-color,color-mix(in srgb,currentColor 22%,transparent));--rf-surface:var(--router-form-surface,transparent);--rf-accent:var(--router-form-accent,currentColor);--rf-accent-contrast:var(--router-form-accent-contrast,Canvas);color:var(--rf-color);font:inherit;line-height:1.5;width:100%}",
@@ -47,7 +48,7 @@
       ".router-form-v1__honeypot{height:1px!important;left:-10000px!important;overflow:hidden!important;position:absolute!important;width:1px!important}",
       "@media(prefers-reduced-motion:no-preference){.router-form-v1__submit{transition:filter .15s ease,opacity .15s ease}}"
     ].join("");
-    document.head.appendChild(style);
+    styleDocument.head.appendChild(style);
   }
 
   function element(tag, className, text) {
@@ -244,7 +245,7 @@
   }
 
   function render(target, payload, options) {
-    installStyles();
+    installStyles(target.ownerDocument);
     var definition = payload.definition || payload;
     var publicId = payload.publicId || options.publicId || "preview";
     var instanceId = String(++mountSequence);

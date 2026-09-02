@@ -157,6 +157,72 @@ export const formFieldV1Schema = z.discriminatedUnion("kind", [
   numberField("slider"),
 ]);
 
+type ParsedFormFieldV1 = z.infer<typeof formFieldV1Schema>;
+
+function defaultValueIsValid(field: ParsedFormFieldV1): boolean {
+  if (field.defaultValue === undefined) return true;
+
+  switch (field.kind) {
+    case "text":
+    case "textarea":
+      return stringSchemaWithLength(field.validation).safeParse(
+        field.defaultValue.trim()
+      ).success;
+    case "email":
+      return stringSchemaWithLength(field.validation)
+        .email("Not a valid email.")
+        .safeParse(field.defaultValue.trim()).success;
+    case "phone":
+      return stringSchemaWithLength(field.validation)
+        .refine(
+          (value) => validator.isMobilePhone(value),
+          "Not a valid phone number."
+        )
+        .safeParse(field.defaultValue.trim()).success;
+    case "url":
+      return stringSchemaWithLength(field.validation)
+        .url("Not a valid URL.")
+        .safeParse(field.defaultValue.trim()).success;
+    case "date":
+      return (
+        (field.validation?.min === undefined ||
+          field.defaultValue >= field.validation.min) &&
+        (field.validation?.max === undefined ||
+          field.defaultValue <= field.validation.max)
+      );
+    case "number":
+    case "slider":
+      return numberSchemaWithConstraints(
+        z.number().finite(),
+        field.validation
+      ).safeParse(field.defaultValue).success;
+    case "select":
+    case "radio":
+      return field.options.some(
+        (option) => option.value === field.defaultValue
+      );
+    case "checkbox-group": {
+      const allowed = new Set(field.options.map((option) => option.value));
+      const uniqueDefaults = new Set(field.defaultValue);
+      const minimum = Math.max(
+        field.required ? 1 : 0,
+        field.validation?.minSelections ?? 0
+      );
+      const maximum = field.validation?.maxSelections ?? field.options.length;
+      return (
+        uniqueDefaults.size === field.defaultValue.length &&
+        field.defaultValue.every((value) => allowed.has(value)) &&
+        field.defaultValue.length >= minimum &&
+        field.defaultValue.length <= maximum
+      );
+    }
+    case "checkbox":
+    case "yes-no":
+    case "switch":
+      return true;
+  }
+}
+
 const completionSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("message"),
@@ -223,6 +289,35 @@ export const formDefinitionV1Schema = z
           }
           optionIds.add(option.id);
           optionValues.add(option.value);
+        });
+
+        if (
+          field.kind === "checkbox-group" &&
+          (field.validation?.minSelections ?? 0) > field.options.length
+        ) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["fields", index, "validation", "minSelections"],
+            message: "Minimum selections cannot exceed the number of options.",
+          });
+        }
+        if (
+          field.kind === "checkbox-group" &&
+          (field.validation?.maxSelections ?? 0) > field.options.length
+        ) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["fields", index, "validation", "maxSelections"],
+            message: "Maximum selections cannot exceed the number of options.",
+          });
+        }
+      }
+
+      if (!defaultValueIsValid(field)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["fields", index, "defaultValue"],
+          message: "Default value must satisfy the field validation.",
         });
       }
     });
@@ -406,13 +501,13 @@ export function compileEndpointSchema(
           },
         };
       case "checkbox":
+      case "switch":
         return {
           ...base,
           value: "boolean",
           ...(field.required ? { constraints: { mustBeTrue: true } } : {}),
         };
       case "yes-no":
-      case "switch":
         return { ...base, value: "boolean" };
     }
   });
@@ -505,11 +600,11 @@ function schemaForField(field: FormFieldV1): z.ZodTypeAny {
       return field.required ? schema : schema.optional();
     }
     case "checkbox":
+    case "switch":
       return field.required
         ? z.literal(true, { errorMap: () => ({ message: "This field is required." }) })
         : z.boolean().optional();
     case "yes-no":
-    case "switch":
       return field.required ? z.boolean() : z.boolean().optional();
   }
 }

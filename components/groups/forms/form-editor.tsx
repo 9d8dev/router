@@ -51,6 +51,7 @@ import {
   allocateSubmissionKey,
   normalizeSubmissionKey,
 } from "@/lib/forms/field-identity";
+import { createLatestSaveQueue } from "@/lib/forms/latest-save-queue";
 
 declare global {
   interface Window {
@@ -152,8 +153,39 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
   const revisionRef = useRef(revision);
   const latestRef = useRef({ name, definition });
   const lastSavedRef = useRef(JSON.stringify({ name, definition }));
-  const savingRef = useRef(false);
-  const queuedRef = useRef(false);
+  const saveQueue = useMemo(
+    () =>
+      createLatestSaveQueue({
+        getSnapshot: () => latestRef.current,
+        fingerprint: JSON.stringify,
+        getPersistedFingerprint: () => lastSavedRef.current,
+        save: async (snapshot, serialized) => {
+          setSaveState("saving");
+          const result = await saveFormDraft({
+            id: form.id,
+            expectedRevision: revisionRef.current,
+            name: snapshot.name,
+            definition: snapshot.definition,
+          });
+
+          if (result?.data) {
+            revisionRef.current = result.data.revision;
+            setRevision(result.data.revision);
+            lastSavedRef.current = serialized;
+            setSaveState("saved");
+            return true;
+          }
+
+          const message = result?.serverError || "Draft could not be saved.";
+          const conflict =
+            message.includes("another tab") || message.includes("newer work");
+          setSaveState(conflict ? "conflict" : "error");
+          toast.error(message);
+          return false;
+        },
+      }),
+    [form.id]
+  );
 
   useEffect(() => {
     latestRef.current = { name, definition };
@@ -163,43 +195,8 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
     revisionRef.current = revision;
   }, [revision]);
 
-  async function persistLatest(): Promise<boolean> {
-    const snapshot = latestRef.current;
-    const serialized = JSON.stringify(snapshot);
-    if (serialized === lastSavedRef.current) return true;
-    if (savingRef.current) {
-      queuedRef.current = true;
-      return false;
-    }
-
-    savingRef.current = true;
-    setSaveState("saving");
-    const result = await saveFormDraft({
-      id: form.id,
-      expectedRevision: revisionRef.current,
-      name: snapshot.name,
-      definition: snapshot.definition,
-    });
-    savingRef.current = false;
-
-    if (result?.data) {
-      revisionRef.current = result.data.revision;
-      setRevision(result.data.revision);
-      lastSavedRef.current = serialized;
-      setSaveState("saved");
-    } else {
-      const message = result?.serverError || "Draft could not be saved.";
-      const conflict = message.includes("another tab") || message.includes("newer work");
-      setSaveState(conflict ? "conflict" : "error");
-      toast.error(message);
-      return false;
-    }
-
-    if (queuedRef.current || JSON.stringify(latestRef.current) !== lastSavedRef.current) {
-      queuedRef.current = false;
-      window.setTimeout(() => void persistLatest(), 0);
-    }
-    return true;
+  function persistLatest(): Promise<boolean> {
+    return saveQueue.persist();
   }
 
   useEffect(() => {
@@ -283,7 +280,7 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
       return;
     }
     const saved = await persistLatest();
-    if (!saved && JSON.stringify(latestRef.current) !== lastSavedRef.current) return;
+    if (!saved) return;
     const result = await publishForm({ id: form.id, expectedDraftRevision: revisionRef.current });
     if (!result?.data) {
       toast.error(result?.serverError || "Could not publish the form.");
@@ -727,13 +724,16 @@ function FieldSettings({
                 <label key={option.id} className="flex items-center gap-2 text-sm">
                   <Checkbox
                     checked={defaults.includes(option.value)}
-                    onCheckedChange={(checked) =>
+                    onCheckedChange={(checked) => {
+                      const nextDefaults = checked
+                        ? [...defaults, option.value]
+                        : defaults.filter((value) => value !== option.value);
                       update({
-                        defaultValue: checked
-                          ? [...defaults, option.value]
-                          : defaults.filter((value) => value !== option.value),
-                      })
-                    }
+                        defaultValue: nextDefaults.length
+                          ? nextDefaults
+                          : undefined,
+                      });
+                    }}
                   />
                   {option.label}
                 </label>

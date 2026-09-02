@@ -7,10 +7,13 @@ import {
   LeadEndpointError,
   LeadValidationError,
 } from "@/lib/forms/lead-acceptance";
-import { requestOrigin } from "@/lib/forms/origins";
+import { isHostedFormRequest, requestOrigin } from "@/lib/forms/origins";
 import { isApprovedFormOrigin, publicCorsHeaders } from "@/lib/forms/public-access";
 import { enforceFormRateLimit, FormRateLimitError } from "@/lib/forms/rate-limit";
-import { verifySubmissionToken } from "@/lib/forms/submission-token";
+import {
+  submissionTokenMatchesRequest,
+  verifySubmissionToken,
+} from "@/lib/forms/submission-token";
 import { publicFormsEnabled } from "@/lib/forms/feature-flags";
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -65,10 +68,14 @@ export async function POST(
     );
   }
 
-  if (token.publicId !== publicId || (token.origin && token.origin !== origin)) {
+  if (!submissionTokenMatchesRequest(token, { publicId, origin })) {
     return NextResponse.json({ error: "invalid_submit_token" }, { status: 401 });
   }
-  if (token.placement !== "hosted") {
+  if (token.placement === "hosted") {
+    if (!isHostedFormRequest(request)) {
+      return NextResponse.json({ error: "origin_not_approved" }, { status: 403 });
+    }
+  } else {
     if (!origin) return NextResponse.json({ error: "origin_not_approved" }, { status: 403 });
     const approved = await isApprovedFormOrigin({
       publicId,
@@ -80,7 +87,7 @@ export async function POST(
 
   const form = await getPublishedForm(publicId);
   if (!form) return NextResponse.json({ error: "form_not_found" }, { status: 404 });
-  const corsHeaders = publicCorsHeaders(origin, Boolean(origin));
+  const corsHeaders = publicCorsHeaders(origin, true);
 
   try {
     await enforceFormRateLimit({ formId: form.id, ip: clientIp(request) });

@@ -78,6 +78,28 @@ describe("embed v1 runtime", () => {
     expect(document.querySelectorAll("#router-forms-v1-styles")).toHaveLength(1);
   });
 
+  it("installs runtime styles in an iframe preview document", async () => {
+    const iframe = document.createElement("iframe");
+    document.body.appendChild(iframe);
+    const iframeDocument = iframe.contentDocument!;
+    const target = iframeDocument.createElement("div");
+    iframeDocument.body.appendChild(target);
+    const runtime = (window as unknown as {
+      RouterFormsV1: { mount: (target: Element, options: object) => Promise<void> };
+    }).RouterFormsV1;
+
+    await runtime.mount(target, {
+      definition,
+      publicId: "iframe-preview",
+      preview: true,
+    });
+
+    expect(target.querySelector("form")).not.toBeNull();
+    expect(iframeDocument.querySelectorAll("#router-forms-v1-styles")).toHaveLength(
+      1
+    );
+  });
+
   it("allows any option to satisfy a required checkbox group", async () => {
     const target = document.createElement("div");
     document.body.appendChild(target);

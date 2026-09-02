@@ -23,6 +23,19 @@ export type LegacyEndpointField = {
 
 export type CompatibleEndpointField = CompiledEndpointField | LegacyEndpointField;
 
+export function endpointSchemaForUpdate(
+  current: CompatibleEndpointField[],
+  requested: CompatibleEndpointField[],
+  hasAttachedForm: boolean
+): CompatibleEndpointField[] | null {
+  if (!hasAttachedForm) return requested;
+  const currentShape = current.map(({ key, value }) => ({ key, value }));
+  const requestedShape = requested.map(({ key, value }) => ({ key, value }));
+  return JSON.stringify(currentShape) === JSON.stringify(requestedShape)
+    ? current
+    : null;
+}
+
 export type EndpointValuesResult =
   | { success: true; data: Record<string, unknown> }
   | { success: false; errors: Record<string, string[]> };

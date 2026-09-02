@@ -76,6 +76,63 @@ describe("FormDefinitionV1", () => {
     expect(result.success).toBe(false);
   });
 
+  it("rejects option bounds and defaults that cannot produce valid submissions", () => {
+    const impossibleGroup = formDefinitionV1Schema.safeParse({
+      ...contactForm,
+      fields: [
+        {
+          ...contactForm.fields[2],
+          validation: { minSelections: 3, maxSelections: 3 },
+          defaultValue: ["sales", "removed"],
+        },
+      ],
+    });
+    const staleChoice = formDefinitionV1Schema.safeParse({
+      ...contactForm,
+      fields: [
+        {
+          id: "fld_topic",
+          key: "topic",
+          kind: "select",
+          label: "Topic",
+          required: false,
+          options: [{ id: "opt_sales", label: "Sales", value: "sales" }],
+          defaultValue: "removed",
+        },
+      ],
+    });
+
+    expect(impossibleGroup.success).toBe(false);
+    expect(staleChoice.success).toBe(false);
+  });
+
+  it("rejects defaults outside authored field constraints", () => {
+    const result = formDefinitionV1Schema.safeParse({
+      ...contactForm,
+      fields: [
+        {
+          id: "fld_score",
+          key: "score",
+          kind: "slider",
+          label: "Score",
+          required: false,
+          defaultValue: 12,
+          validation: { min: 0, max: 10, step: 2 },
+        },
+        {
+          id: "fld_email",
+          key: "email",
+          kind: "email",
+          label: "Email",
+          required: false,
+          defaultValue: "not-an-email",
+        },
+      ],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it("stores structurally valid incomplete drafts without making them publishable", () => {
     const incomplete = {
       ...contactForm,
@@ -195,6 +252,38 @@ describe("FormDefinitionV1", () => {
     ]);
     expect(
       validateEndpointValues(compiled, { consent: false, topics: [] })
+    ).toMatchObject({ success: false });
+  });
+
+  it("uses the same must-be-on semantics for required switches everywhere", () => {
+    const definition = formDefinitionV1Schema.parse({
+      ...contactForm,
+      fields: [
+        {
+          id: "fld_updates",
+          key: "updates",
+          kind: "switch",
+          label: "Receive updates",
+          required: true,
+        },
+      ],
+    });
+
+    expect(compileEndpointSchema(definition)).toEqual([
+      {
+        key: "updates",
+        value: "boolean",
+        required: true,
+        constraints: { mustBeTrue: true },
+      },
+    ]);
+    expect(validateFormValues(definition, { updates: false })).toMatchObject({
+      success: false,
+    });
+    expect(
+      validateEndpointValues(compileEndpointSchema(definition), {
+        updates: false,
+      })
     ).toMatchObject({ success: false });
   });
 

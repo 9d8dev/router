@@ -110,6 +110,7 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm exec wp-env start --config="${{ matrix.config }}" --update
       - run: chmod +x integrations/wordpress/test-matrix.sh
       - run: integrations/wordpress/test-matrix.sh "${{ matrix.config }}" "${{ matrix.theme }}"

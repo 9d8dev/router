@@ -14,6 +14,7 @@ import {
 import { randomBytes } from "crypto";
 import { redirect } from "next/navigation";
 import { invalidatePublishedForm } from "@/lib/forms/cache";
+import { endpointSchemaForUpdate } from "@/lib/forms/endpoint-schema";
 
 async function invalidateAttachedPublishedForm(
   endpointId: string,
@@ -172,23 +173,49 @@ export const createEndpoint = authenticatedAction
 export const updateEndpoint = authenticatedAction
   .schema(updateEndpointFormSchema)
   .action(async ({ parsedInput, ctx: { userId } }) => {
-    await db
-      .update(endpoints)
-      .set({
-        name: parsedInput.name,
-        schema: parsedInput.schema,
-        // TODO: add this to form
-        // enabled: parsedInput.enabled,
-        formEnabled: parsedInput.formEnabled,
-        successUrl: parsedInput.successUrl,
-        failUrl: parsedInput.failUrl,
-        webhookEnabled: parsedInput.webhookEnabled,
-        webhook: parsedInput.webhook,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(eq(endpoints.id, parsedInput.id), eq(endpoints.userId, userId))
+    await db.transaction(async (tx) => {
+      const [current] = await tx
+        .select({
+          schema: endpoints.schema,
+          attachedFormId: forms.id,
+        })
+        .from(endpoints)
+        .leftJoin(forms, eq(forms.endpointId, endpoints.id))
+        .where(
+          and(eq(endpoints.id, parsedInput.id), eq(endpoints.userId, userId))
+        )
+        .limit(1);
+      if (!current) throw new ActionError("Endpoint not found.");
+
+      const nextSchema = endpointSchemaForUpdate(
+        current.schema,
+        parsedInput.schema,
+        Boolean(current.attachedFormId)
       );
+      if (!nextSchema) {
+        throw new ActionError(
+          "Edit fields in the attached form builder, then publish the form to update this endpoint schema."
+        );
+      }
+
+      await tx
+        .update(endpoints)
+        .set({
+          name: parsedInput.name,
+          schema: nextSchema,
+          // TODO: add this to form
+          // enabled: parsedInput.enabled,
+          formEnabled: parsedInput.formEnabled,
+          successUrl: parsedInput.successUrl,
+          failUrl: parsedInput.failUrl,
+          webhookEnabled: parsedInput.webhookEnabled,
+          webhook: parsedInput.webhook,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(eq(endpoints.id, parsedInput.id), eq(endpoints.userId, userId))
+        );
+    });
 
     revalidatePath("/endpoints");
     redirect("/endpoints");

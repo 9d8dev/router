@@ -33,6 +33,7 @@ type GeneralSchema = {
     allowedValues?: string[];
     minItems?: number;
     maxItems?: number;
+    mustBeTrue?: boolean;
   };
 };
 

@@ -1,10 +1,12 @@
+import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   createSubmissionToken,
+  submissionTokenMatchesRequest,
   verifySubmissionToken,
 } from "../lib/forms/submission-token";
-import { normalizeOrigin } from "../lib/forms/origins";
+import { isHostedFormRequest, normalizeOrigin } from "../lib/forms/origins";
 import { publishedFormEtag } from "../lib/forms/cache";
 
 describe("normalizeOrigin", () => {
@@ -51,7 +53,11 @@ describe("signed form submission tokens", () => {
   it("rejects tampering and expiry", () => {
     const now = new Date("2026-09-01T18:00:00.000Z");
     const token = createSubmissionToken(
-      { publicId: "form_public_1", placement: "hosted" },
+      {
+        publicId: "form_public_1",
+        placement: "hosted",
+        origin: "https://forms.router.so",
+      },
       { secret, now }
     );
 
@@ -67,6 +73,120 @@ describe("signed form submission tokens", () => {
       })
     ).toThrow("expired");
     vi.useRealTimers();
+  });
+
+  it("requires every token to match the request form and origin", () => {
+    const token = verifySubmissionToken(
+      createSubmissionToken(
+        {
+          publicId: "form_public_1",
+          placement: "hosted",
+          origin: "https://forms.router.so",
+        },
+        { secret }
+      ),
+      { secret }
+    );
+
+    expect(
+      submissionTokenMatchesRequest(token, {
+        publicId: "form_public_1",
+        origin: "https://forms.router.so",
+      })
+    ).toBe(true);
+    expect(
+      submissionTokenMatchesRequest(token, {
+        publicId: "form_public_1",
+        origin: "https://attacker.example",
+      })
+    ).toBe(false);
+    expect(
+      submissionTokenMatchesRequest(token, {
+        publicId: "form_public_1",
+        origin: null,
+      })
+    ).toBe(false);
+  });
+
+  it("rejects legacy signed tokens without an origin claim", () => {
+    const now = new Date("2026-09-01T18:00:00.000Z");
+    const token = createSubmissionToken(
+      {
+        publicId: "form_public_1",
+        placement: "hosted",
+        origin: "https://forms.router.so",
+      },
+      { secret, now }
+    );
+    const [encodedPayload] = token.split(".");
+    const payload = JSON.parse(
+      Buffer.from(encodedPayload, "base64url").toString("utf8")
+    );
+    delete payload.origin;
+    const originlessPayload = Buffer.from(JSON.stringify(payload), "utf8").toString(
+      "base64url"
+    );
+    const originlessSignature = createHmac("sha256", secret)
+      .update(originlessPayload)
+      .digest("base64url");
+
+    expect(() =>
+      verifySubmissionToken(`${originlessPayload}.${originlessSignature}`, {
+        secret,
+        now,
+      })
+    ).toThrow("Invalid submission token");
+  });
+});
+
+describe("hosted form origin checks", () => {
+  it("accepts exact hosted origins and rejects missing, opaque, or foreign origins", () => {
+    const url = "https://forms.router.so/api/public/forms/form_1/render-session";
+
+    expect(
+      isHostedFormRequest(
+        new Request(url, { headers: { origin: "https://forms.router.so" } })
+      )
+    ).toBe(true);
+    expect(isHostedFormRequest(new Request(url))).toBe(false);
+    expect(
+      isHostedFormRequest(new Request(url, { headers: { origin: "null" } }))
+    ).toBe(false);
+    expect(
+      isHostedFormRequest(
+        new Request(url, { headers: { origin: "https://attacker.example" } })
+      )
+    ).toBe(false);
+    for (const malformedOrigin of [
+      "https://forms.router.so/",
+      "https://forms.router.so/path",
+      "https://forms.router.so?query=1",
+      "https://forms.router.so#fragment",
+      "https://forms.router.so:443",
+    ]) {
+      expect(
+        isHostedFormRequest(
+          new Request(url, { headers: { origin: malformedOrigin } })
+        )
+      ).toBe(false);
+    }
+  });
+
+  it("keeps exact-origin local hosted development working", () => {
+    expect(
+      isHostedFormRequest(
+        new Request("http://localhost:3000/api/public/forms/form_1/render-session", {
+          headers: { origin: "http://localhost:3000" },
+        })
+      )
+    ).toBe(true);
+    expect(
+      isHostedFormRequest(
+        new Request("http://[::1]:3000/api/public/forms/form_1/render-session", {
+          headers: { origin: "http://[::1]:3000" },
+        })
+      )
+    ).toBe(true);
   });
 });
 

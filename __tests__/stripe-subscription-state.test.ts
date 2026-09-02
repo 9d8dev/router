@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   endedSubscriptionState,
   failedPaymentState,
+  invoiceSubscriptionId,
   shouldApplySubscriptionEvent,
+  shouldClearScheduledCancellation,
+  stripeCheckoutMetadata,
   subscriptionEntitlementState,
 } from "../lib/forms/stripe-subscription-state";
 
@@ -70,5 +73,51 @@ describe("Stripe entitlement transitions", () => {
     expect(shouldApplySubscriptionEvent(null, "sub_legacy")).toBe(true);
     expect(shouldApplySubscriptionEvent("sub_current", "sub_current")).toBe(true);
     expect(shouldApplySubscriptionEvent("sub_current", "sub_legacy")).toBe(false);
+  });
+
+  it("clears period-end cancellation only after selecting a new Router price", () => {
+    process.env.STRIPE_PRO_MONTHLY_PRICE_ID = "price_new_pro";
+
+    expect(
+      shouldClearScheduledCancellation({
+        priceId: "price_new_pro",
+        cancelAtPeriodEnd: true,
+        legacyMigrationRequired: true,
+      })
+    ).toBe(true);
+    expect(
+      shouldClearScheduledCancellation({
+        priceId: "price_1QVIiNCr7fYvZ7eq3SRX0YGS",
+        cancelAtPeriodEnd: true,
+        legacyMigrationRequired: true,
+      })
+    ).toBe(false);
+    expect(
+      shouldClearScheduledCancellation({
+        priceId: "price_new_pro",
+        cancelAtPeriodEnd: false,
+        legacyMigrationRequired: true,
+      })
+    ).toBe(false);
+    expect(
+      shouldClearScheduledCancellation({
+        priceId: "price_new_pro",
+        cancelAtPeriodEnd: true,
+        legacyMigrationRequired: false,
+      })
+    ).toBe(false);
+  });
+
+  it("extracts subscription identity from failed invoices", () => {
+    expect(invoiceSubscriptionId("sub_current")).toBe("sub_current");
+    expect(invoiceSubscriptionId({ id: "sub_expanded" })).toBe("sub_expanded");
+    expect(invoiceSubscriptionId(null)).toBeNull();
+  });
+
+  it("identifies the Router user on checkout and subscription metadata", () => {
+    expect(stripeCheckoutMetadata("user_123", "business")).toEqual({
+      routerUserId: "user_123",
+      routerPlan: "business",
+    });
   });
 });

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getPublishedForm } from "@/lib/data/forms";
-import { requestOrigin } from "@/lib/forms/origins";
+import { isHostedFormRequest, requestOrigin } from "@/lib/forms/origins";
 import { isApprovedFormOrigin, publicCorsHeaders } from "@/lib/forms/public-access";
 import { createSubmissionToken } from "@/lib/forms/submission-token";
 import { publicFormsEnabled } from "@/lib/forms/feature-flags";
@@ -9,11 +9,6 @@ import { publicFormsEnabled } from "@/lib/forms/feature-flags";
 const inputSchema = z.object({
   placement: z.enum(["hosted", "embed", "wordpress"]),
 });
-
-function isHostedRequest(request: Request): boolean {
-  const hostname = new URL(request.url).hostname;
-  return hostname === "forms.router.so" || hostname === "localhost" || hostname === "127.0.0.1";
-}
 
 export async function POST(
   request: Request,
@@ -34,8 +29,7 @@ export async function POST(
   const origin = requestOrigin(request);
   let approved = false;
   if (input.data.placement === "hosted") {
-    const targetOrigin = new URL(request.url).origin.toLowerCase();
-    approved = isHostedRequest(request) && (!origin || origin === targetOrigin);
+    approved = isHostedFormRequest(request);
   } else if (origin) {
     approved = await isApprovedFormOrigin({
       publicId,
@@ -44,7 +38,7 @@ export async function POST(
     });
   }
 
-  if (!approved) {
+  if (!approved || !origin) {
     return NextResponse.json(
       { error: "origin_not_approved" },
       { status: 403, headers: publicCorsHeaders(origin, false) }
@@ -58,7 +52,7 @@ export async function POST(
       submitToken: createSubmissionToken({
         publicId,
         placement: input.data.placement,
-        ...(origin ? { origin } : {}),
+        origin,
       }),
       expiresIn: 3600,
     },
