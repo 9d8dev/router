@@ -3,6 +3,7 @@ import { getPublishedForm } from "@/lib/data/forms";
 import { isApprovedFormOrigin, publicCorsHeaders } from "@/lib/forms/public-access";
 import { requestOrigin } from "@/lib/forms/origins";
 import { publicFormsEnabled } from "@/lib/forms/feature-flags";
+import { publishedFormEtag } from "@/lib/forms/cache";
 
 export async function GET(
   request: Request,
@@ -26,7 +27,7 @@ export async function GET(
       (await isApprovedFormOrigin({ publicId, origin, placement: "wordpress" }))
     : false;
   const headers = publicCorsHeaders(origin, approved);
-  const etag = `W/\"${published.publicId}-${published.revision}\"`;
+  const etag = publishedFormEtag(published);
   headers.set("ETag", etag);
   headers.set(
     "Cache-Control",

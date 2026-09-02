@@ -1,4 +1,4 @@
-import { and, eq, gte, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import {
@@ -22,7 +22,7 @@ import {
 import type { FormPlacement } from "./submission-token";
 import {
   crossedUsageThresholds,
-  sendUsageThresholdNotification,
+  deliverUsageThresholdNotification,
   type UsageThreshold,
 } from "./usage-notifications";
 
@@ -229,7 +229,11 @@ export async function acceptLead(
           updatedAt: now,
         },
       })
-      .returning({ leadCount: usagePeriods.leadCount });
+      .returning({
+        leadCount: usagePeriods.leadCount,
+        notifiedAt80: usagePeriods.notifiedAt80,
+        notifiedAt100: usagePeriods.notifiedAt100,
+      });
 
     const graceLimit =
       entitlement.monthlyLeads === null
@@ -241,31 +245,31 @@ export async function acceptLead(
       );
     }
 
-    const usageNotifications: UsageThreshold[] = [];
-    for (const threshold of crossedUsageThresholds({
+    const usageNotifications: UsageThreshold[] = crossedUsageThresholds({
       used: usage.leadCount,
       limit: entitlement.monthlyLeads,
-    })) {
-      const notificationColumn =
-        threshold === 80 ? usagePeriods.notifiedAt80 : usagePeriods.notifiedAt100;
-      const [claimed] = await tx
+    }).filter((threshold) =>
+      threshold === 80 ? usage.notifiedAt80 === null : usage.notifiedAt100 === null
+    );
+    for (const threshold of usageNotifications) {
+      const notificationLimitColumn =
+        threshold === 80
+          ? usagePeriods.notificationLimit80
+          : usagePeriods.notificationLimit100;
+      await tx
         .update(usagePeriods)
-        .set(threshold === 80 ? { notifiedAt80: now } : { notifiedAt100: now })
+        .set(
+          threshold === 80
+            ? { notificationLimit80: entitlement.monthlyLeads }
+            : { notificationLimit100: entitlement.monthlyLeads }
+        )
         .where(
           and(
             eq(usagePeriods.userId, row.owner.id),
             eq(usagePeriods.periodStart, periodStart),
-            isNull(notificationColumn),
-            gte(
-              usagePeriods.leadCount,
-              threshold === 80
-                ? Math.ceil(entitlement.monthlyLeads! * 0.8)
-                : entitlement.monthlyLeads!
-            )
+            isNull(notificationLimitColumn)
           )
-        )
-        .returning({ userId: usagePeriods.userId });
-      if (claimed) usageNotifications.push(threshold);
+        );
     }
 
     const [lead] = await tx
@@ -316,8 +320,6 @@ export async function acceptLead(
       formId,
       firstPlacement: Boolean(firstPlacement),
       periodStart,
-      leadCount: usage.leadCount,
-      monthlyLeadLimit: entitlement.monthlyLeads,
       usageNotifications,
       webhook:
         row.endpoint.webhookEnabled && row.endpoint.webhook
@@ -337,19 +339,17 @@ export async function acceptLead(
         },
       });
     }
-    if (accepted.monthlyLeadLimit !== null) {
-      for (const threshold of accepted.usageNotifications) {
-        try {
-          await sendUsageThresholdNotification({
-            email: accepted.ownerEmail,
-            threshold,
-            used: accepted.leadCount,
-            limit: accepted.monthlyLeadLimit,
-            periodStart: accepted.periodStart,
-          });
-        } catch (error) {
-          console.error(`Could not send ${threshold}% usage notification:`, error);
-        }
+    for (const threshold of accepted.usageNotifications) {
+      try {
+        await deliverUsageThresholdNotification({
+          userId: accepted.ownerId,
+          email: accepted.ownerEmail,
+          threshold,
+          periodStart: accepted.periodStart,
+          now,
+        });
+      } catch (error) {
+        console.error(`Could not send ${threshold}% usage notification:`, error);
       }
     }
     revalidatePath("/");

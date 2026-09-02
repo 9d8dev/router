@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { crossedUsageThresholds } from "../lib/forms/usage-notifications";
+import {
+  crossedUsageThresholds,
+  sendUsageThresholdNotification,
+} from "../lib/forms/usage-notifications";
 
 describe("usage notification thresholds", () => {
   it("claims no notification below 80 percent", () => {
@@ -16,5 +19,20 @@ describe("usage notification thresholds", () => {
 
   it("does not notify enterprise accounts with contract-defined capacity", () => {
     expect(crossedUsageThresholds({ used: 1_000_000, limit: null })).toEqual([]);
+  });
+
+  it("keeps delivery retryable when email is not configured", async () => {
+    const originalKey = process.env.RESEND_API_KEY;
+    delete process.env.RESEND_API_KEY;
+    await expect(
+      sendUsageThresholdNotification({
+        email: "owner@example.com",
+        threshold: 80,
+        used: 80,
+        limit: 100,
+        periodStart: "2026-09-01",
+      })
+    ).rejects.toThrow("not configured");
+    if (originalKey) process.env.RESEND_API_KEY = originalKey;
   });
 });

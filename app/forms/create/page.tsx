@@ -4,6 +4,7 @@ import { Header } from "@/components/parts/header";
 import { PageWrapper } from "@/components/parts/page-wrapper";
 import { getEndpoints } from "@/lib/data/endpoints";
 import { CreateForm } from "@/components/groups/forms/create-form";
+import { isEndpointSchemaCompatible } from "@/lib/forms/starters";
 
 export default async function CreateFormPage({
   searchParams,
@@ -13,13 +14,24 @@ export default async function CreateFormPage({
   const endpoints = await getEndpoints();
   if (!endpoints?.data || endpoints.serverError) notFound();
   const { endpointId } = await searchParams;
+  const compatibleEndpoints = endpoints.data.filter((endpoint) =>
+    isEndpointSchemaCompatible(endpoint.schema)
+  );
+  const initialEndpointId = compatibleEndpoints.some(
+    (endpoint) => endpoint.id === endpointId
+  )
+    ? endpointId
+    : undefined;
 
   return (
     <>
       <Breadcrumbs pageName="New form" />
       <PageWrapper>
         <Header title="New form">Start fresh, use a starter, or attach an endpoint</Header>
-        <CreateForm endpoints={endpoints.data} initialEndpointId={endpointId} />
+        <CreateForm
+          endpoints={compatibleEndpoints}
+          initialEndpointId={initialEndpointId}
+        />
       </PageWrapper>
     </>
   );

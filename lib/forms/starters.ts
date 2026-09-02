@@ -1,4 +1,8 @@
-import type { FormDefinitionV1 } from "./definition";
+import type {
+  CompiledEndpointField,
+  FormDefinitionV1,
+  FormFieldV1,
+} from "./definition";
 
 export type StarterId = "blank" | "contact" | "lead-capture" | "feedback" | "newsletter";
 
@@ -99,41 +103,178 @@ export function getStarter(id: StarterId): FormDefinitionV1 {
   return structuredClone(FORM_STARTERS[id]);
 }
 
+type EndpointSeedField = {
+  key: string;
+  value: string;
+  required?: boolean;
+  constraints?: CompiledEndpointField["constraints"];
+};
+
+const directlyRepresentableEndpointTypes = new Set([
+  "email",
+  "phone",
+  "url",
+  "date",
+  "number",
+  "boolean",
+  "string",
+  "zip_code",
+]);
+
+function hasUsableAllowedValues(field: EndpointSeedField): boolean {
+  const values = field.constraints?.allowedValues;
+  return Boolean(
+    values?.length &&
+      new Set(values).size === values.length &&
+      values.every((value) => value.trim().length > 0 && value.length <= 120)
+  );
+}
+
+export function isEndpointSchemaCompatible(schema: EndpointSeedField[]): boolean {
+  const keys = new Set<string>();
+  return schema.every((field) => {
+    if (
+      field.key.length > 80 ||
+      !/^[A-Za-z][A-Za-z0-9_]*$/.test(field.key) ||
+      keys.has(field.key)
+    ) {
+      return false;
+    }
+    keys.add(field.key);
+    if (field.value === "string_array") return hasUsableAllowedValues(field);
+    if (!directlyRepresentableEndpointTypes.has(field.value)) return false;
+    if (field.value === "string" && field.constraints?.allowedValues) {
+      return hasUsableAllowedValues(field);
+    }
+    return true;
+  });
+}
+
+function endpointOptions(
+  field: EndpointSeedField,
+  fieldId: string
+): Array<{ id: string; label: string; value: string }> {
+  return field.constraints!.allowedValues!.map((value, optionIndex) => ({
+    id: `${fieldId}_option_${optionIndex + 1}`,
+    label: value,
+    value,
+  }));
+}
+
+function seedField(
+  field: EndpointSeedField,
+  index: number,
+  id: string,
+  key: string,
+  label: string
+): FormFieldV1 {
+  const base = { id, key, label, required: field.required ?? true };
+  const constraints = field.constraints;
+
+  if (field.value === "string_array") {
+    return {
+      ...base,
+      kind: "checkbox-group",
+      options: endpointOptions(field, id),
+      validation: {
+        ...(constraints?.minItems !== undefined
+          ? { minSelections: constraints.minItems }
+          : {}),
+        ...(constraints?.maxItems !== undefined
+          ? { maxSelections: constraints.maxItems }
+          : {}),
+      },
+    };
+  }
+  if (field.value === "string" && constraints?.allowedValues) {
+    return {
+      ...base,
+      kind: "select",
+      options: endpointOptions(field, id),
+    };
+  }
+  if (field.value === "zip_code") {
+    return {
+      ...base,
+      kind: "text",
+      validation: { minLength: 5, maxLength: 5 },
+    };
+  }
+  if (
+    field.value === "email" ||
+    field.value === "phone" ||
+    field.value === "url" ||
+    field.value === "string"
+  ) {
+    const legacyStringMinimum =
+      field.value === "string" &&
+      field.required === undefined &&
+      constraints?.minLength === undefined
+        ? 2
+        : undefined;
+    return {
+      ...base,
+      kind: field.value === "string" ? "text" : field.value,
+      ...(legacyStringMinimum !== undefined ||
+      constraints?.minLength !== undefined ||
+      constraints?.maxLength !== undefined
+        ? {
+            validation: {
+              ...(legacyStringMinimum !== undefined
+                ? { minLength: legacyStringMinimum }
+                : constraints?.minLength !== undefined
+                ? { minLength: constraints.minLength }
+                : {}),
+              ...(constraints?.maxLength !== undefined
+                ? { maxLength: constraints.maxLength }
+                : {}),
+            },
+          }
+        : {}),
+    };
+  }
+  if (field.value === "number") {
+    return {
+      ...base,
+      kind: "number",
+      validation: {
+        ...(typeof constraints?.min === "number" ? { min: constraints.min } : {}),
+        ...(typeof constraints?.max === "number" ? { max: constraints.max } : {}),
+        ...(constraints?.step !== undefined ? { step: constraints.step } : {}),
+      },
+    };
+  }
+  if (field.value === "date") {
+    return {
+      ...base,
+      kind: "date",
+      validation: {
+        ...(typeof constraints?.min === "string" ? { min: constraints.min } : {}),
+        ...(typeof constraints?.max === "string" ? { max: constraints.max } : {}),
+      },
+    };
+  }
+  if (field.value === "boolean") return { ...base, kind: "yes-no" };
+
+  throw new Error(`Endpoint field ${index + 1} cannot be represented by a Router form.`);
+}
+
 export function seedDefinitionFromEndpoint(
   name: string,
-  schema: Array<{ key: string; value: string; required?: boolean }>
+  schema: EndpointSeedField[]
 ): FormDefinitionV1 {
-  const usedKeys = new Set<string>();
+  if (!isEndpointSchemaCompatible(schema)) {
+    throw new Error("This endpoint schema cannot be represented by a Router form.");
+  }
   return {
     version: 1,
     title: name,
     fields: schema.map((field, index) => {
-      const cleaned = field.key.replace(/[^A-Za-z0-9_]/g, "_");
-      const baseKey = /^[A-Za-z]/.test(cleaned)
-        ? cleaned
-        : `field_${cleaned || index + 1}`;
-      let key = baseKey;
-      let suffix = 2;
-      while (usedKeys.has(key)) key = `${baseKey}_${suffix++}`;
-      usedKeys.add(key);
-      return {
-        id: `imported_${index}_${baseKey}`,
-        key,
-        kind:
-          field.value === "email" ||
-          field.value === "phone" ||
-          field.value === "url" ||
-          field.value === "date" ||
-          field.value === "number"
-            ? field.value
-            : field.value === "boolean"
-              ? "yes-no"
-              : "text",
-        label: field.key
-          .replace(/[_-]+/g, " ")
-          .replace(/^./, (character) => character.toUpperCase()),
-        required: field.required ?? true,
-      };
+      const id = `imported_field_${index + 1}`;
+      const label = field.key
+        .replace(/[_-]+/g, " ")
+        .replace(/^./, (character) => character.toUpperCase());
+      return seedField(field, index, id, field.key, label);
     }),
     submitLabel: "Submit",
     completion,

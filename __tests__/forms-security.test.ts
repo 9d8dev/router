@@ -4,6 +4,7 @@ import {
   verifySubmissionToken,
 } from "../lib/forms/submission-token";
 import { normalizeOrigin } from "../lib/forms/origins";
+import { publishedFormEtag } from "../lib/forms/cache";
 
 describe("normalizeOrigin", () => {
   it("normalizes a site URL to a stable origin", () => {
@@ -65,5 +66,23 @@ describe("signed form submission tokens", () => {
       })
     ).toThrow("expired");
     vi.useRealTimers();
+  });
+});
+
+describe("published form cache validators", () => {
+  it("changes when attribution visibility changes without a form revision", () => {
+    expect(
+      publishedFormEtag({
+        publicId: "form_public_1",
+        revision: 4,
+        showAttribution: true,
+      })
+    ).not.toBe(
+      publishedFormEtag({
+        publicId: "form_public_1",
+        revision: 4,
+        showAttribution: false,
+      })
+    );
   });
 });

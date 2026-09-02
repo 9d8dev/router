@@ -251,6 +251,10 @@ export const usagePeriods = pgTable(
     leadCount: integer("leadCount").notNull().default(0),
     notifiedAt80: timestamp("notifiedAt80", { withTimezone: true }),
     notifiedAt100: timestamp("notifiedAt100", { withTimezone: true }),
+    notifyingAt80: timestamp("notifyingAt80", { withTimezone: true }),
+    notifyingAt100: timestamp("notifyingAt100", { withTimezone: true }),
+    notificationLimit80: integer("notificationLimit80"),
+    notificationLimit100: integer("notificationLimit100"),
     updatedAt: timestamp("updatedAt", { withTimezone: true })
       .notNull()
       .defaultNow(),

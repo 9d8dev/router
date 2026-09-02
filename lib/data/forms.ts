@@ -16,11 +16,13 @@ import {
 import { ActionError, authenticatedAction } from "./safe-action";
 import {
   compileEndpointSchema,
+  formDraftDefinitionV1Schema,
   formDefinitionV1Schema,
   type FormDefinitionV1,
 } from "@/lib/forms/definition";
 import {
   getStarter,
+  isEndpointSchemaCompatible,
   seedDefinitionFromEndpoint,
   type StarterId,
 } from "@/lib/forms/starters";
@@ -49,8 +51,8 @@ const createFormInputSchema = z.object({
 const saveFormDraftInputSchema = z.object({
   id: z.string().min(1),
   expectedRevision: z.number().int().positive(),
-  name: z.string().trim().min(1).max(120),
-  definition: formDefinitionV1Schema,
+  name: z.string().max(120),
+  definition: formDraftDefinitionV1Schema,
 });
 
 export const getForms = authenticatedAction.action(
@@ -125,6 +127,11 @@ export const createForm = authenticatedAction
           .where(and(eq(endpoints.id, endpointId), eq(endpoints.userId, userId)))
           .limit(1);
         if (!endpoint) throw new ActionError("Endpoint not found.");
+        if (!isEndpointSchemaCompatible(endpoint.schema)) {
+          throw new ActionError(
+            "This endpoint contains fields that cannot be represented by a Router form."
+          );
+        }
 
         const [existingForm] = await tx
           .select({ id: forms.id })
@@ -205,7 +212,9 @@ export const createForm = authenticatedAction
 export const saveFormDraft = authenticatedAction
   .schema(saveFormDraftInputSchema)
   .action(async ({ parsedInput, ctx: { userId } }) => {
-    const definition = formDefinitionV1Schema.parse(parsedInput.definition);
+    const definition = formDraftDefinitionV1Schema.parse(
+      parsedInput.definition
+    ) as FormDefinitionV1;
     const [updated] = await db
       .update(forms)
       .set({
@@ -247,6 +256,7 @@ export const publishForm = authenticatedAction
         throw new ActionError("Save the latest draft before publishing.");
       }
 
+      z.string().trim().min(1).max(120).parse(form.name);
       const definition = formDefinitionV1Schema.parse(form.draftDefinition);
       const compiledSchema = compileEndpointSchema(definition);
       const now = new Date();
@@ -265,11 +275,23 @@ export const publishForm = authenticatedAction
           unpublishedAt: null,
           updatedAt: now,
         })
-        .where(eq(forms.id, form.id))
+        .where(
+          and(
+            eq(forms.id, form.id),
+            eq(forms.userId, userId),
+            eq(forms.draftRevision, parsedInput.expectedDraftRevision),
+            eq(forms.publishedRevision, form.publishedRevision)
+          )
+        )
         .returning({
           publicId: forms.publicId,
           publishedRevision: forms.publishedRevision,
         });
+      if (!updated) {
+        throw new ActionError(
+          "This form changed while it was publishing. Reload and publish the latest draft."
+        );
+      }
       return updated;
     });
 

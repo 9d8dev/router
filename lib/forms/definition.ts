@@ -1,5 +1,9 @@
 import { z } from "zod";
 import validator from "validator";
+import {
+  numberSchemaWithConstraints,
+  stringSchemaWithLength,
+} from "./field-constraints";
 
 const fieldIdSchema = z
   .string()
@@ -163,7 +167,13 @@ const completionSchema = z.discriminatedUnion("type", [
     url: z
       .string()
       .url()
-      .refine((value) => new URL(value).protocol === "https:", {
+      .refine((value) => {
+        try {
+          return new URL(value).protocol === "https:";
+        } catch {
+          return false;
+        }
+      }, {
         message: "Redirect URLs must use HTTPS.",
       }),
   }),
@@ -217,6 +227,91 @@ export const formDefinitionV1Schema = z
       }
     });
   });
+
+const draftOptionSchema = z.object({
+  id: z.string().max(80),
+  label: z.string().max(120),
+  value: z.string().max(120),
+});
+
+const draftValidationSchema = z
+  .object({
+    minLength: z.number().finite().optional(),
+    maxLength: z.number().finite().optional(),
+    min: z.union([z.number().finite(), z.string().max(100)]).optional(),
+    max: z.union([z.number().finite(), z.string().max(100)]).optional(),
+    step: z.number().finite().optional(),
+    minSelections: z.number().finite().optional(),
+    maxSelections: z.number().finite().optional(),
+  })
+  .optional();
+
+const draftFieldSchema = z
+  .object({
+    id: z.string().max(80),
+    key: z.string().max(80),
+    kind: z.enum([
+      "text",
+      "email",
+      "phone",
+      "url",
+      "date",
+      "number",
+      "textarea",
+      "select",
+      "radio",
+      "checkbox",
+      "checkbox-group",
+      "yes-no",
+      "switch",
+      "slider",
+    ]),
+    label: z.string().max(160),
+    helpText: z.string().max(500).optional(),
+    required: z.boolean(),
+    placeholder: z.string().max(200).optional(),
+    defaultValue: z
+      .union([
+        z.string().max(10_000),
+        z.number().finite(),
+        z.boolean(),
+        z.array(z.string().max(120)).max(100),
+      ])
+      .optional(),
+    options: z.array(draftOptionSchema).max(100).optional(),
+    rows: z.number().finite().optional(),
+    validation: draftValidationSchema,
+  })
+  .superRefine((field, context) => {
+    if (
+      (field.kind === "select" ||
+        field.kind === "radio" ||
+        field.kind === "checkbox-group") &&
+      !field.options
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["options"],
+        message: "Choice fields require options.",
+      });
+    }
+  });
+
+/**
+ * Drafts preserve safe editor state even while fields are temporarily incomplete.
+ * Publishing always reparses the snapshot with formDefinitionV1Schema.
+ */
+export const formDraftDefinitionV1Schema = z.object({
+  version: z.literal(1),
+  title: z.string().max(120),
+  description: z.string().max(600).optional(),
+  fields: z.array(draftFieldSchema).max(100),
+  submitLabel: z.string().max(80),
+  completion: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("message"), message: z.string().max(1_000) }),
+    z.object({ type: z.literal("redirect"), url: z.string().max(2_048) }),
+  ]),
+});
 
 export type FormDefinitionV1 = z.infer<typeof formDefinitionV1Schema>;
 export type FormFieldV1 = z.infer<typeof formFieldV1Schema>;
@@ -332,24 +427,34 @@ function schemaForField(field: FormFieldV1): z.ZodTypeAny {
   switch (field.kind) {
     case "text":
     case "textarea": {
-      let schema = z.string();
-      if (field.validation?.minLength !== undefined) {
-        schema = schema.min(field.validation.minLength, `Enter at least ${field.validation.minLength} characters.`);
-      }
-      if (field.validation?.maxLength !== undefined) {
-        schema = schema.max(field.validation.maxLength, `Enter no more than ${field.validation.maxLength} characters.`);
-      }
+      const schema = stringSchemaWithLength(field.validation, {
+        min: field.validation?.minLength !== undefined
+          ? `Enter at least ${field.validation.minLength} characters.`
+          : undefined,
+        max: field.validation?.maxLength !== undefined
+          ? `Enter no more than ${field.validation.maxLength} characters.`
+          : undefined,
+      });
       return optionalString(schema, field.required);
     }
     case "email":
-      return optionalString(z.string().email("Enter a valid email address."), field.required);
+      return optionalString(
+        stringSchemaWithLength(field.validation).email("Enter a valid email address."),
+        field.required
+      );
     case "phone":
       return optionalString(
-        z.string().refine((value) => validator.isMobilePhone(value), "Enter a valid phone number."),
+        stringSchemaWithLength(field.validation).refine(
+          (value) => validator.isMobilePhone(value),
+          "Enter a valid phone number."
+        ),
         field.required
       );
     case "url":
-      return optionalString(z.string().url("Enter a valid URL."), field.required);
+      return optionalString(
+        stringSchemaWithLength(field.validation).url("Enter a valid URL."),
+        field.required
+      );
     case "date": {
       let schema: z.ZodType<string> = z.string().date("Enter a valid date.");
       if (field.validation?.min) {
@@ -362,9 +467,10 @@ function schemaForField(field: FormFieldV1): z.ZodTypeAny {
     }
     case "number":
     case "slider": {
-      let schema = z.coerce.number().finite("Enter a valid number.");
-      if (field.validation?.min !== undefined) schema = schema.min(field.validation.min);
-      if (field.validation?.max !== undefined) schema = schema.max(field.validation.max);
+      const schema = numberSchemaWithConstraints(
+        z.coerce.number().finite("Enter a valid number."),
+        field.validation
+      );
       return field.required ? schema : z.preprocess((value) => (value === "" ? undefined : value), schema.optional());
     }
     case "select":

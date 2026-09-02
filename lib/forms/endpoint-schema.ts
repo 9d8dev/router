@@ -1,6 +1,10 @@
 import { z } from "zod";
 import validator from "validator";
 import type { CompiledEndpointField } from "./definition";
+import {
+  numberSchemaWithConstraints,
+  stringSchemaWithLength,
+} from "./field-constraints";
 
 export type LegacyEndpointField = {
   key: string;
@@ -34,15 +38,14 @@ function fieldSchema(field: CompatibleEndpointField): z.ZodTypeAny {
 
   switch (field.value) {
     case "email":
-      schema = z.string().email("Not a valid email.");
+      schema = stringSchemaWithLength(constraints).email("Not a valid email.");
       break;
     case "phone":
-      schema = z
-        .string()
+      schema = stringSchemaWithLength(constraints)
         .refine((value) => validator.isMobilePhone(value), "Not a valid phone number.");
       break;
     case "url":
-      schema = z.string().url("Not a valid URL.");
+      schema = stringSchemaWithLength(constraints).url("Not a valid URL.");
       break;
     case "zip_code":
       schema = z.string().length(5, "Not a valid zip code.");
@@ -59,10 +62,11 @@ function fieldSchema(field: CompatibleEndpointField): z.ZodTypeAny {
       break;
     }
     case "number": {
-      let numberSchema = z.number().finite();
-      if (typeof constraints?.min === "number") numberSchema = numberSchema.min(constraints.min);
-      if (typeof constraints?.max === "number") numberSchema = numberSchema.max(constraints.max);
-      schema = numberSchema;
+      schema = numberSchemaWithConstraints(z.number().finite(), {
+        min: typeof constraints?.min === "number" ? constraints.min : undefined,
+        max: typeof constraints?.max === "number" ? constraints.max : undefined,
+        step: constraints?.step,
+      });
       break;
     }
     case "boolean":
@@ -82,10 +86,12 @@ function fieldSchema(field: CompatibleEndpointField): z.ZodTypeAny {
     }
     case "string":
     default: {
-      let stringSchema = z.string();
-      if (constraints?.minLength !== undefined) stringSchema = stringSchema.min(constraints.minLength);
-      else if (isLegacyField(field)) stringSchema = stringSchema.min(2, "Not a valid string.");
-      if (constraints?.maxLength !== undefined) stringSchema = stringSchema.max(constraints.maxLength);
+      const stringSchema = stringSchemaWithLength(
+        constraints?.minLength === undefined && isLegacyField(field)
+          ? { ...constraints, minLength: 2 }
+          : constraints,
+        { min: isLegacyField(field) ? "Not a valid string." : undefined }
+      );
       if (constraints?.allowedValues) {
         schema = stringSchema.refine(
           (value) => constraints.allowedValues!.includes(value),

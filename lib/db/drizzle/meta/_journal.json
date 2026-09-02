@@ -78,6 +78,20 @@
       "when": 1788300568939,
       "tag": "0010_placement_first_lead_analytics",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788313995410,
+      "tag": "0011_usage_notification_delivery_lease",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1788314505657,
+      "tag": "0012_usage_notification_pending_limits",
+      "breakpoints": true
     }
   ]
 }

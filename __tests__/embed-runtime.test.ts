@@ -78,6 +78,60 @@ describe("embed v1 runtime", () => {
     expect(document.querySelectorAll("#router-forms-v1-styles")).toHaveLength(1);
   });
 
+  it("allows any option to satisfy a required checkbox group", async () => {
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    const runtime = (window as unknown as {
+      RouterFormsV1: { mount: (target: Element, options: object) => Promise<void> };
+    }).RouterFormsV1;
+    const groupDefinition: FormDefinitionV1 = {
+      ...definition,
+      fields: [
+        {
+          id: "group",
+          key: "group",
+          kind: "checkbox-group",
+          label: "Group",
+          required: true,
+          options: [
+            { id: "group_a", label: "A", value: "a" },
+            { id: "group_b", label: "B", value: "b" },
+          ],
+        },
+      ],
+    };
+
+    await runtime.mount(target, {
+      definition: groupDefinition,
+      publicId: "required-group",
+      preview: true,
+    });
+
+    const form = target.querySelector("form")!;
+    const checkboxes = target.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    checkboxes[1].click();
+    expect(form.checkValidity()).toBe(true);
+  });
+
+  it("uses unique control IDs when the same form is mounted twice", async () => {
+    const first = document.createElement("div");
+    const second = document.createElement("div");
+    document.body.append(first, second);
+    const runtime = (window as unknown as {
+      RouterFormsV1: { mount: (target: Element, options: object) => Promise<void> };
+    }).RouterFormsV1;
+
+    await Promise.all([
+      runtime.mount(first, { definition, publicId: "duplicate", preview: true }),
+      runtime.mount(second, { definition, publicId: "duplicate", preview: true }),
+    ]);
+
+    const ids = Array.from(document.querySelectorAll<HTMLElement>("[id]"))
+      .map((element) => element.id)
+      .filter((id) => id !== "router-forms-v1-styles");
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it.each(Object.entries(FORM_STARTERS))(
     "renders the %s starter through the production runtime",
     async (_starterId, starter) => {

@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   compileEndpointSchema,
+  formDraftDefinitionV1Schema,
   formDefinitionV1Schema,
   validateFormValues,
 } from "../lib/forms/definition";
+import { validateEndpointValues } from "../lib/forms/endpoint-schema";
+import {
+  isEndpointSchemaCompatible,
+  seedDefinitionFromEndpoint,
+} from "../lib/forms/starters";
 
 const contactForm = {
   version: 1 as const,
@@ -69,6 +75,25 @@ describe("FormDefinitionV1", () => {
     expect(result.success).toBe(false);
   });
 
+  it("stores structurally valid incomplete drafts without making them publishable", () => {
+    const incomplete = {
+      ...contactForm,
+      title: "",
+      submitLabel: "",
+      completion: { type: "redirect" as const, url: "https://" },
+      fields: [
+        {
+          ...contactForm.fields[0],
+          key: "",
+          validation: { minLength: 10, maxLength: 2 },
+        },
+      ],
+    };
+
+    expect(formDraftDefinitionV1Schema.safeParse(incomplete).success).toBe(true);
+    expect(formDefinitionV1Schema.safeParse(incomplete).success).toBe(false);
+  });
+
   it("compiles fields into Router's endpoint schema", () => {
     expect(compileEndpointSchema(contactForm)).toEqual([
       {
@@ -87,6 +112,45 @@ describe("FormDefinitionV1", () => {
           minItems: 1,
           maxItems: 2,
         },
+      },
+    ]);
+  });
+
+  it("rejects endpoint attachments that cannot be represented without contract drift", () => {
+    const unsupported = [{ key: "tags", value: "string_array" }];
+
+    expect(isEndpointSchemaCompatible(unsupported)).toBe(false);
+    expect(
+      isEndpointSchemaCompatible([{ key: "full name", value: "string" }])
+    ).toBe(false);
+    expect(() => seedDefinitionFromEndpoint("Tags", unsupported)).toThrow(
+      "cannot be represented"
+    );
+  });
+
+  it("preserves supported legacy constraints when seeding an attached form", () => {
+    const seeded = seedDefinitionFromEndpoint("Qualified lead", [
+      { key: "name", value: "string" },
+      { key: "postal_code", value: "zip_code", required: true },
+      {
+        key: "interests",
+        value: "string_array",
+        required: true,
+        constraints: {
+          allowedValues: ["sales", "support"],
+          minItems: 1,
+          maxItems: 2,
+        },
+      },
+    ]);
+
+    expect(seeded.fields).toMatchObject([
+      { kind: "text", validation: { minLength: 2 } },
+      { kind: "text", validation: { minLength: 5, maxLength: 5 } },
+      {
+        kind: "checkbox-group",
+        options: [{ value: "sales" }, { value: "support" }],
+        validation: { minSelections: 1, maxSelections: 2 },
       },
     ]);
   });
@@ -127,5 +191,79 @@ describe("validateFormValues", () => {
         endpointToken: ["Unknown field."],
       });
     }
+  });
+
+  it("enforces every authored string and number constraint", () => {
+    const constrainedForm = formDefinitionV1Schema.parse({
+      ...contactForm,
+      fields: [
+        {
+          id: "fld_email",
+          key: "email",
+          kind: "email",
+          label: "Email",
+          required: true,
+          validation: { minLength: 18, maxLength: 30 },
+        },
+        {
+          id: "fld_score",
+          key: "score",
+          kind: "number",
+          label: "Score",
+          required: true,
+          validation: { min: 1, max: 10, step: 2 },
+        },
+        {
+          id: "fld_phone",
+          key: "phone",
+          kind: "phone",
+          label: "Phone",
+          required: true,
+          validation: { minLength: 20 },
+        },
+        {
+          id: "fld_url",
+          key: "url",
+          kind: "url",
+          label: "URL",
+          required: true,
+          validation: { maxLength: 10 },
+        },
+      ],
+    });
+
+    expect(
+      validateFormValues(constrainedForm, {
+        email: "a@example.com",
+        score: 2,
+        phone: "+12025550123",
+        url: "https://example.com",
+      })
+    ).toMatchObject({
+      success: false,
+      errors: {
+        email: expect.any(Array),
+        score: expect.any(Array),
+        phone: expect.any(Array),
+        url: expect.any(Array),
+      },
+    });
+
+    expect(
+      validateEndpointValues(compileEndpointSchema(constrainedForm), {
+        email: "a@example.com",
+        score: 2,
+        phone: "+12025550123",
+        url: "https://example.com",
+      })
+    ).toMatchObject({
+      success: false,
+      errors: {
+        email: expect.any(Array),
+        score: expect.any(Array),
+        phone: expect.any(Array),
+        url: expect.any(Array),
+      },
+    });
   });
 });

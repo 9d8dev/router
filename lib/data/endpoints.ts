@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { db, Endpoint } from "../db";
 import { endpoints, forms } from "../db/schema";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, isNotNull } from "drizzle-orm";
 import { getErrorMessage } from "@/lib/helpers/error-message";
 import { ActionError, authenticatedAction } from "./safe-action";
 import { z } from "zod";
@@ -13,6 +13,25 @@ import {
 } from "./validations";
 import { randomBytes } from "crypto";
 import { redirect } from "next/navigation";
+import { invalidatePublishedForm } from "@/lib/forms/cache";
+
+async function invalidateAttachedPublishedForm(
+  endpointId: string,
+  userId: string
+): Promise<void> {
+  const [attachedForm] = await db
+    .select({ publicId: forms.publicId })
+    .from(forms)
+    .where(
+      and(
+        eq(forms.endpointId, endpointId),
+        eq(forms.userId, userId),
+        isNotNull(forms.publishedAt)
+      )
+    )
+    .limit(1);
+  if (attachedForm) invalidatePublishedForm(attachedForm.publicId);
+}
 
 /**
  * Gets all endpoints for a user
@@ -94,6 +113,7 @@ export const disableEndpoint = authenticatedAction
       .update(endpoints)
       .set({ enabled: false, updatedAt: new Date() })
       .where(and(eq(endpoints.id, id), eq(endpoints.userId, userId)));
+    await invalidateAttachedPublishedForm(id, userId);
     revalidatePath("/endpoints");
   });
 
@@ -109,6 +129,7 @@ export const enableEndpoint = authenticatedAction
       .update(endpoints)
       .set({ enabled: true, updatedAt: new Date() })
       .where(and(eq(endpoints.id, id), eq(endpoints.userId, userId)));
+    await invalidateAttachedPublishedForm(id, userId);
     revalidatePath("/endpoints");
   });
 

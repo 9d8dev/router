@@ -23,6 +23,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { getFormForEndpoint } from "@/lib/data/forms";
 import { formsNavigationEnabled } from "@/lib/forms/feature-flags";
+import { isEndpointSchemaCompatible } from "@/lib/forms/starters";
 
 const pageData = {
   title: "Endpoint",
@@ -45,6 +46,7 @@ export default async function Page({
   if (!endpointData || serverError) notFound();
 
   const schema = endpointData?.schema as GeneralSchema[];
+  const endpointSupportsForm = isEndpointSchemaCompatible(schema);
 
   const url = `https://app.router.so/api/endpoints/${endpointData.id}`;
 
@@ -93,7 +95,8 @@ export default async function Page({
         <Header
           title={`${pageData?.title}: ${"`"}${endpointData?.name}${"`"}`}
         >{`${pageData?.description}`}</Header>
-        {formsNavigationEnabled() && (
+        {formsNavigationEnabled() &&
+          (attachedForm?.data || endpointSupportsForm) && (
           <div className="mb-6 flex items-center justify-between rounded-lg border bg-background p-4">
             <div>
               <p className="text-sm font-medium">

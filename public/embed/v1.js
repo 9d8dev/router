@@ -10,6 +10,7 @@
   var script = document.currentScript;
   var apiBase = script && script.src ? new URL(script.src, window.location.href).origin : "https://forms.router.so";
   var styleId = "router-forms-v1-styles";
+  var mountSequence = 0;
 
   function installStyles() {
     if (document.getElementById(styleId)) return;
@@ -56,8 +57,8 @@
     return node;
   }
 
-  function controlId(publicId, fieldId) {
-    return "router-form-" + publicId + "-" + fieldId;
+  function controlId(publicId, instanceId, fieldId) {
+    return "router-form-" + publicId + "-" + instanceId + "-" + fieldId;
   }
 
   function appendHelp(container, field, id) {
@@ -77,11 +78,11 @@
     control.classList.add("router-form-v1__input");
   }
 
-  function renderField(field, publicId) {
+  function renderField(field, publicId, instanceId) {
     var isGroup = ["radio", "checkbox-group", "yes-no"].indexOf(field.kind) !== -1;
     var wrapper = element(isGroup ? "fieldset" : "div", "router-form-v1__field");
     wrapper.dataset.routerField = field.key;
-    var id = controlId(publicId, field.id);
+    var id = controlId(publicId, instanceId, field.id);
     var label = element(isGroup ? "legend" : "label", isGroup ? "router-form-v1__legend" : "router-form-v1__label", field.label);
     if (!isGroup) label.htmlFor = id;
     if (field.required) label.appendChild(element("span", "router-form-v1__required", " (required)"));
@@ -127,13 +128,30 @@
         input.name = field.key;
         input.value = option.value;
         input.id = id + "-" + index;
-        if (field.required && index === 0) input.required = true;
+        if (field.required && field.kind !== "checkbox-group" && index === 0) input.required = true;
         var defaults = Array.isArray(field.defaultValue) ? field.defaultValue : [String(field.defaultValue)];
         input.checked = defaults.indexOf(option.value) !== -1;
         choiceLabel.appendChild(input);
         choiceLabel.appendChild(document.createTextNode(option.label));
         choices.appendChild(choiceLabel);
       });
+      if (field.kind === "checkbox-group") {
+        var checkboxInputs = choices.querySelectorAll('input[type="checkbox"]');
+        var validationAnchor = checkboxInputs[0];
+        var minimumSelections = Math.max(field.required ? 1 : 0, field.validation && field.validation.minSelections || 0);
+        var maximumSelections = field.validation && field.validation.maxSelections;
+        var syncCheckboxGroupValidity = function () {
+          var checked = Array.prototype.filter.call(checkboxInputs, function (input) { return input.checked; }).length;
+          var message = checked < minimumSelections
+            ? "Choose at least " + minimumSelections + " option" + (minimumSelections === 1 ? "." : "s.")
+            : maximumSelections !== undefined && checked > maximumSelections
+              ? "Choose no more than " + maximumSelections + " option" + (maximumSelections === 1 ? "." : "s.")
+              : "";
+          if (validationAnchor) validationAnchor.setCustomValidity(message);
+        };
+        checkboxInputs.forEach(function (input) { input.addEventListener("change", syncCheckboxGroupValidity); });
+        syncCheckboxGroupValidity();
+      }
       wrapper.appendChild(choices);
     } else if (field.kind === "checkbox" || field.kind === "switch") {
       label.remove();
@@ -213,7 +231,7 @@
       if (!wrapper) return;
       var control = wrapper.querySelector("input,select,textarea");
       var error = element("p", "router-form-v1__error", errors[key].join(" "));
-      error.id = controlId(form.dataset.publicId, key) + "-error";
+      error.id = controlId(form.dataset.publicId, form.dataset.instanceId, key) + "-error";
       error.setAttribute("role", "alert");
       wrapper.appendChild(error);
       if (control) {
@@ -229,6 +247,7 @@
     installStyles();
     var definition = payload.definition || payload;
     var publicId = payload.publicId || options.publicId || "preview";
+    var instanceId = String(++mountSequence);
     target.replaceChildren();
     var root = element("section", "router-form-v1");
     var header = element("header", "router-form-v1__header");
@@ -237,9 +256,10 @@
     root.appendChild(header);
     var form = element("form", "router-form-v1__form");
     form.dataset.publicId = publicId;
+    form.dataset.instanceId = instanceId;
     form.noValidate = false;
     var fields = element("div", "router-form-v1__fields");
-    definition.fields.forEach(function (field) { fields.appendChild(renderField(field, publicId)); });
+    definition.fields.forEach(function (field) { fields.appendChild(renderField(field, publicId, instanceId)); });
     form.appendChild(fields);
     var honeypot = element("div", "router-form-v1__honeypot");
     honeypot.setAttribute("aria-hidden", "true");
