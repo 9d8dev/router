@@ -10,6 +10,7 @@ import {
   isEndpointSchemaCompatible,
   seedDefinitionFromEndpoint,
 } from "../lib/forms/starters";
+import { allocateSubmissionKey } from "../lib/forms/field-identity";
 
 const contactForm = {
   version: 1 as const,
@@ -153,6 +154,67 @@ describe("FormDefinitionV1", () => {
         validation: { minSelections: 1, maxSelections: 2 },
       },
     ]);
+  });
+
+  it("preserves required checkbox semantics in the compiled endpoint schema", () => {
+    const definition = formDefinitionV1Schema.parse({
+      ...contactForm,
+      fields: [
+        {
+          id: "fld_consent",
+          key: "consent",
+          kind: "checkbox",
+          label: "I consent",
+          required: true,
+        },
+        {
+          id: "fld_topics",
+          key: "topics",
+          kind: "checkbox-group",
+          label: "Topics",
+          required: true,
+          options: [{ id: "opt_sales", label: "Sales", value: "sales" }],
+        },
+      ],
+    });
+    const compiled = compileEndpointSchema(definition);
+
+    expect(compiled).toEqual([
+      {
+        key: "consent",
+        value: "boolean",
+        required: true,
+        constraints: { mustBeTrue: true },
+      },
+      {
+        key: "topics",
+        value: "string_array",
+        required: true,
+        constraints: { allowedValues: ["sales"], minItems: 1 },
+      },
+    ]);
+    expect(
+      validateEndpointValues(compiled, { consent: false, topics: [] })
+    ).toMatchObject({ success: false });
+  });
+
+  it("retains the nonnegative legacy number contract when reading and attaching", () => {
+    const legacyNumber = [{ key: "amount", value: "number" as const }];
+
+    expect(validateEndpointValues(legacyNumber, { amount: -1 })).toMatchObject({
+      success: false,
+    });
+    expect(seedDefinitionFromEndpoint("Payment", legacyNumber).fields[0]).toMatchObject({
+      kind: "number",
+      validation: { min: 0 },
+    });
+  });
+
+  it("allocates a submission key that remains unique after field deletion", () => {
+    expect(allocateSubmissionKey("Text", ["text_1", "text_3"])).toBe("text_2");
+    expect(allocateSubmissionKey("Text", ["text_1", "text_2", "text_3"])).toBe(
+      "text_4"
+    );
   });
 });
 

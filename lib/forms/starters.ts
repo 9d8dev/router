@@ -234,11 +234,17 @@ function seedField(
     };
   }
   if (field.value === "number") {
+    const legacyMinimum =
+      field.required === undefined && constraints?.min === undefined ? 0 : undefined;
     return {
       ...base,
       kind: "number",
       validation: {
-        ...(typeof constraints?.min === "number" ? { min: constraints.min } : {}),
+        ...(typeof constraints?.min === "number"
+          ? { min: constraints.min }
+          : legacyMinimum !== undefined
+            ? { min: legacyMinimum }
+            : {}),
         ...(typeof constraints?.max === "number" ? { max: constraints.max } : {}),
         ...(constraints?.step !== undefined ? { step: constraints.step } : {}),
       },
@@ -254,7 +260,12 @@ function seedField(
       },
     };
   }
-  if (field.value === "boolean") return { ...base, kind: "yes-no" };
+  if (field.value === "boolean") {
+    return {
+      ...base,
+      kind: constraints?.mustBeTrue ? "checkbox" : "yes-no",
+    };
+  }
 
   throw new Error(`Endpoint field ${index + 1} cannot be represented by a Router form.`);
 }

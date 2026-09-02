@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
@@ -14,10 +14,41 @@ import { invalidatePublishedForm } from "@/lib/forms/cache";
 import {
   endedSubscriptionState,
   failedPaymentState,
+  shouldApplySubscriptionEvent,
   subscriptionEntitlementState,
 } from "@/lib/forms/stripe-subscription-state";
 
+async function subscriptionOwner(subscription: Stripe.Subscription) {
+  const userCondition = subscription.metadata.routerUserId
+    ? eq(users.id, subscription.metadata.routerUserId)
+    : eq(users.stripeCustomerId, subscription.customer as string);
+  const [owner] = await db
+    .select({ id: users.id, stripeSubscriptionId: users.stripeSubscriptionId })
+    .from(users)
+    .where(userCondition)
+    .limit(1);
+  if (
+    !owner ||
+    !shouldApplySubscriptionEvent(owner.stripeSubscriptionId, subscription.id)
+  ) {
+    return null;
+  }
+  return owner;
+}
+
+function currentSubscriptionCondition(userId: string, subscriptionId: string) {
+  return and(
+    eq(users.id, userId),
+    or(
+      isNull(users.stripeSubscriptionId),
+      eq(users.stripeSubscriptionId, subscriptionId)
+    )
+  );
+}
+
 async function updateSubscription(subscription: Stripe.Subscription) {
+  const owner = await subscriptionOwner(subscription);
+  if (!owner) return;
   const priceId = subscription.items.data[0]?.price.id;
   if (!priceId) throw new Error("Subscription has no price.");
   const state = subscriptionEntitlementState({
@@ -29,13 +60,10 @@ async function updateSubscription(subscription: Stripe.Subscription) {
     cancelAtPeriodEnd: subscription.cancel_at_period_end,
   });
 
-  const userCondition = subscription.metadata.routerUserId
-    ? eq(users.id, subscription.metadata.routerUserId)
-    : eq(users.stripeCustomerId, subscription.customer as string);
   const [updated] = await db
     .update(users)
     .set(state)
-    .where(userCondition)
+    .where(currentSubscriptionCondition(owner.id, subscription.id))
     .returning({ id: users.id });
 
   if (updated) {
@@ -67,7 +95,12 @@ export async function POST(request: Request) {
       const priceId = lineItems.data[0]?.price?.id;
       const plan = priceId ? planForNewPrice(priceId) : null;
       if (!plan) throw new Error("Checkout used an unrecognized or retired price.");
-      if (!session.customer_details?.email) throw new Error("Checkout has no customer email.");
+      if (!session.metadata?.routerUserId && !session.customer_details?.email) {
+        throw new Error("Checkout has no Router user or customer email.");
+      }
+      const userCondition = session.metadata?.routerUserId
+        ? eq(users.id, session.metadata.routerUserId)
+        : eq(users.email, session.customer_details!.email!);
       const [updated] = await db
         .update(users)
         .set({
@@ -76,7 +109,15 @@ export async function POST(request: Request) {
           stripeSubscriptionId: session.subscription as string,
           legacyPriceMigrationRequired: false,
         })
-        .where(eq(users.email, session.customer_details.email))
+        .where(
+          and(
+            userCondition,
+            or(
+              isNull(users.stripeSubscriptionId),
+              eq(users.stripeSubscriptionId, session.subscription as string)
+            )
+          )
+        )
         .returning({ id: users.id });
       if (updated) {
         (await getUserPublishedFormIds(updated.id)).forEach(invalidatePublishedForm);
@@ -92,10 +133,14 @@ export async function POST(request: Request) {
 
     if (event.type === "customer.subscription.deleted") {
       const subscription = event.data.object;
+      const owner = await subscriptionOwner(subscription);
+      if (!owner) {
+        return NextResponse.json({ success: true, ignored: "superseded_subscription" });
+      }
       const [updated] = await db
         .update(users)
         .set(endedSubscriptionState(subscription.status))
-        .where(eq(users.stripeCustomerId, subscription.customer as string))
+        .where(currentSubscriptionCondition(owner.id, subscription.id))
         .returning({ id: users.id });
       if (updated) {
         (await getUserPublishedFormIds(updated.id)).forEach(invalidatePublishedForm);

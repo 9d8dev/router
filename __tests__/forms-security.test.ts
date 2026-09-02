@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   createSubmissionToken,
@@ -83,6 +84,20 @@ describe("published form cache validators", () => {
         revision: 4,
         showAttribution: false,
       })
+    );
+  });
+});
+
+describe("public form submission protection", () => {
+  it("counts honeypot submissions as rate-limited attempts", () => {
+    const source = readFileSync(
+      "app/api/public/forms/[publicId]/leads/route.ts",
+      "utf8"
+    );
+
+    expect(source.indexOf("await enforceFormRateLimit")).toBeGreaterThan(-1);
+    expect(source.indexOf("await enforceFormRateLimit")).toBeLessThan(
+      source.indexOf("if (parsed.website)")
     );
   });
 });

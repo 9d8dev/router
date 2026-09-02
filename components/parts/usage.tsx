@@ -35,7 +35,7 @@ export const Usage = ({
 
   const daysLeft = calculateDaysLeft();
   const remaining = Math.max(0, totalUsage - used);
-  const usagePercentage = (used / totalUsage) * 100;
+  const usagePercentage = totalUsage > 0 ? (used / totalUsage) * 100 : 100;
 
   return (
     <Card className="w-full flex flex-col">

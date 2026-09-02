@@ -52,8 +52,36 @@ export type CapacityState = {
   graceLimit: number | null;
 };
 
-export function getCapacityState(plan: RouterPlan, used: number): CapacityState {
-  const limit = getEntitlement(plan).monthlyLeads;
+export type EnterpriseLeadContract = {
+  monthlyLeadLimit?: number | null;
+  unlimitedLeads?: boolean;
+};
+
+export function resolveMonthlyLeadLimit(
+  plan: RouterPlan,
+  contract: EnterpriseLeadContract = {}
+): number | null {
+  const fixedLimit = getEntitlement(plan).monthlyLeads;
+  if (fixedLimit !== null) return fixedLimit;
+  if (contract.unlimitedLeads === true) return null;
+  if (
+    typeof contract.monthlyLeadLimit === "number" &&
+    Number.isInteger(contract.monthlyLeadLimit) &&
+    contract.monthlyLeadLimit > 0
+  ) {
+    return contract.monthlyLeadLimit;
+  }
+  // Enterprise capacity must be configured explicitly. Missing contract data
+  // fails closed instead of becoming an accidental unlimited entitlement.
+  return 0;
+}
+
+export function getCapacityState(
+  plan: RouterPlan,
+  used: number,
+  contract: EnterpriseLeadContract = {}
+): CapacityState {
+  const limit = resolveMonthlyLeadLimit(plan, contract);
   if (limit === null) {
     return { state: "ok", accepts: true, used, limit: null, graceLimit: null };
   }

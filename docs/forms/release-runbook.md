@@ -11,8 +11,9 @@ This runbook deliberately separates code proof, database migration, deployment, 
 ## 2. Database gate
 
 - Back up the target PostgreSQL database.
-- Apply migrations `0006` through `0010` in order with `pnpm db:migrate`.
+- Apply migrations `0006` through `0013` in order with `pnpm db:migrate`.
 - Confirm `forms`, `formOrigins`, `wordpressConnections`, `usagePeriods`, `formRateBuckets`, and `formPlacementMilestones` exist.
+- Confirm usage notification lease/limit columns and the Enterprise contract allowance columns exist; existing Enterprise accounts should have the compatibility allowance from `0013`.
 - Confirm existing endpoint and lead counts are unchanged and the current UTC usage backfill is plausible.
 
 ## 3. Application deployment gate
@@ -37,7 +38,7 @@ This runbook deliberately separates code proof, database migration, deployment, 
 
 ## 6. Billing migration gate
 
-- Create and archive the four new Stripe Prices, then configure their IDs in the app.
+- Create and archive the four new Stripe Prices, then configure their IDs in the app and allow those Prices in Billing Portal subscription updates. Set the Portal's proration behavior deliberately before customers can change plans.
 - Run `pnpm stripe:legacy-migration` without `--apply`; review every subscription in the dry-run output.
 - After explicit authorization, re-run with `--apply` and verify Stripe webhook readback records `cancel_at_period_end` and the period end for each affected user.
 - Send the approved customer communications from `legacy-customer-email-drafts.md` on the stated schedule.

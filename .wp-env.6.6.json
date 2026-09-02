@@ -1,0 +1,8 @@
+{
+  "$schema": "https://schemas.wp.org/trunk/wp-env.json",
+  "core": "WordPress/WordPress#6.6",
+  "phpVersion": "7.4",
+  "plugins": ["./integrations/wordpress/router-forms"],
+  "testsEnvironment": false,
+  "port": 8888
+}

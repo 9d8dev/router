@@ -47,6 +47,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import {
+  allocateSubmissionKey,
+  normalizeSubmissionKey,
+} from "@/lib/forms/field-identity";
 
 declare global {
   interface Window {
@@ -93,20 +97,11 @@ const fieldKinds: Array<{ kind: FieldKind; label: string }> = [
   { kind: "slider", label: "Slider" },
 ];
 
-function stableKey(value: string): string {
-  const key = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  return /^[a-z]/.test(key) ? key : `field_${key || "value"}`;
-}
-
-function makeField(kind: FieldKind, count: number): FormFieldV1 {
+function makeField(kind: FieldKind, existingKeys: Iterable<string>): FormFieldV1 {
   const label = fieldKinds.find((field) => field.kind === kind)?.label ?? "Field";
   const base = {
     id: `fld_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`,
-    key: `${stableKey(label)}_${count + 1}`,
+    key: allocateSubmissionKey(label, existingKeys),
     label,
     required: false,
   };
@@ -128,7 +123,7 @@ function makeField(kind: FieldKind, count: number): FormFieldV1 {
 }
 
 function changeFieldKind(field: FormFieldV1, kind: FieldKind): FormFieldV1 {
-  const replacement = makeField(kind, 0) as FormFieldV1 & Record<string, unknown>;
+  const replacement = makeField(kind, []) as FormFieldV1 & Record<string, unknown>;
   return {
     ...replacement,
     id: field.id,
@@ -241,7 +236,7 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
   }
 
   function addField(kind: FieldKind) {
-    const field = makeField(kind, definition.fields.length);
+    const field = makeField(kind, definition.fields.map((item) => item.key));
     setDefinition((current) => ({ ...current, fields: [...current.fields, field] }));
     setSelectedId(field.id);
   }
@@ -337,7 +332,7 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
     );
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${stableKey(name)}.router-form.json`;
+    anchor.download = `${normalizeSubmissionKey(name)}.router-form.json`;
     anchor.click();
     URL.revokeObjectURL(url);
   }
@@ -586,7 +581,7 @@ function FieldSettings({
       </div>
       <div className="grid gap-2">
         <Label>Submission key</Label>
-        <Input value={field.key} onChange={(event) => update({ key: stableKey(event.target.value) })} />
+        <Input value={field.key} onChange={(event) => update({ key: normalizeSubmissionKey(event.target.value) })} />
       </div>
       <div className="grid gap-2">
         <Label>Help text</Label>
@@ -601,6 +596,83 @@ function FieldSettings({
       <label className="flex items-center gap-2 text-sm">
         <Checkbox checked={field.required} onCheckedChange={(checked) => update({ required: checked === true })} /> Required
       </label>
+      {(field.kind === "text" ||
+        field.kind === "email" ||
+        field.kind === "phone" ||
+        field.kind === "url" ||
+        field.kind === "textarea") && (
+        <div className="grid gap-2">
+          <Label>Default value</Label>
+          {field.kind === "textarea" ? (
+            <Textarea
+              value={typeof editable.defaultValue === "string" ? editable.defaultValue : ""}
+              onChange={(event) =>
+                update({ defaultValue: event.target.value || undefined })
+              }
+            />
+          ) : (
+            <Input
+              value={typeof editable.defaultValue === "string" ? editable.defaultValue : ""}
+              onChange={(event) =>
+                update({ defaultValue: event.target.value || undefined })
+              }
+            />
+          )}
+        </div>
+      )}
+      {(field.kind === "number" || field.kind === "slider") && (
+        <div className="grid gap-2">
+          <Label>Default value</Label>
+          <Input
+            type="number"
+            value={typeof editable.defaultValue === "number" ? editable.defaultValue : ""}
+            onChange={(event) =>
+              update({
+                defaultValue:
+                  event.target.value === "" ? undefined : Number(event.target.value),
+              })
+            }
+          />
+        </div>
+      )}
+      {field.kind === "date" && (
+        <div className="grid gap-2">
+          <Label>Default date</Label>
+          <Input
+            type="date"
+            value={typeof editable.defaultValue === "string" ? editable.defaultValue : ""}
+            onChange={(event) =>
+              update({ defaultValue: event.target.value || undefined })
+            }
+          />
+        </div>
+      )}
+      {(field.kind === "checkbox" ||
+        field.kind === "yes-no" ||
+        field.kind === "switch") && (
+        <div className="grid gap-2">
+          <Label>Default state</Label>
+          <Select
+            value={
+              typeof editable.defaultValue === "boolean"
+                ? String(editable.defaultValue)
+                : "unset"
+            }
+            onValueChange={(value) =>
+              update({
+                defaultValue: value === "unset" ? undefined : value === "true",
+              })
+            }
+          >
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="unset">No default</SelectItem>
+              <SelectItem value="true">Yes / on</SelectItem>
+              <SelectItem value="false">No / off</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
       {hasOptions && (
         <div className="grid gap-2">
           <Label>Options</Label>
@@ -615,7 +687,7 @@ function FieldSettings({
                     return {
                       id: `${field.id}_option_${index + 1}`,
                       label: label?.trim() || `Option ${index + 1}`,
-                      value: value?.trim() || stableKey(label || `option_${index + 1}`),
+                      value: value?.trim() || normalizeSubmissionKey(label || `option_${index + 1}`),
                     };
                   })
                   .filter((option) => option.value),
@@ -624,6 +696,50 @@ function FieldSettings({
             rows={6}
           />
           <p className="text-xs text-muted-foreground">One option per line: Label|value</p>
+        </div>
+      )}
+      {(field.kind === "select" || field.kind === "radio") && (
+        <div className="grid gap-2">
+          <Label>Default option</Label>
+          <select
+            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+            value={typeof editable.defaultValue === "string" ? editable.defaultValue : ""}
+            onChange={(event) =>
+              update({ defaultValue: event.target.value || undefined })
+            }
+          >
+            <option value="">No default</option>
+            {options.map((option) => (
+              <option key={option.id} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </div>
+      )}
+      {field.kind === "checkbox-group" && (
+        <div className="grid gap-2">
+          <Label>Default selections</Label>
+          <div className="grid gap-2 rounded-md border p-3">
+            {options.map((option) => {
+              const defaults = Array.isArray(editable.defaultValue)
+                ? editable.defaultValue
+                : [];
+              return (
+                <label key={option.id} className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={defaults.includes(option.value)}
+                    onCheckedChange={(checked) =>
+                      update({
+                        defaultValue: checked
+                          ? [...defaults, option.value]
+                          : defaults.filter((value) => value !== option.value),
+                      })
+                    }
+                  />
+                  {option.label}
+                </label>
+              );
+            })}
+          </div>
         </div>
       )}
       {(field.kind === "text" || field.kind === "textarea" || field.kind === "email" || field.kind === "phone" || field.kind === "url") && (
@@ -637,6 +753,83 @@ function FieldSettings({
           {(["min", "max", "step"] as const).map((key) => (
             <div key={key} className="grid gap-2"><Label className="capitalize">{key}</Label><Input type="number" value={(validation as { min?: number; max?: number; step?: number })?.[key] ?? ""} onChange={(event) => update({ validation: { ...validation, [key]: event.target.value ? Number(event.target.value) : undefined } })} /></div>
           ))}
+        </div>
+      )}
+      {field.kind === "date" && (
+        <div className="grid grid-cols-2 gap-2">
+          {(["min", "max"] as const).map((key) => (
+            <div key={key} className="grid gap-2">
+              <Label>{key === "min" ? "Earliest date" : "Latest date"}</Label>
+              <Input
+                type="date"
+                value={(validation as { min?: string; max?: string })?.[key] ?? ""}
+                onChange={(event) =>
+                  update({
+                    validation: {
+                      ...validation,
+                      [key]: event.target.value || undefined,
+                    },
+                  })
+                }
+              />
+            </div>
+          ))}
+        </div>
+      )}
+      {field.kind === "checkbox-group" && (
+        <div className="grid grid-cols-2 gap-2">
+          <div className="grid gap-2">
+            <Label>Minimum selections</Label>
+            <Input
+              type="number"
+              min={0}
+              max={options.length}
+              value={(validation as { minSelections?: number })?.minSelections ?? ""}
+              onChange={(event) =>
+                update({
+                  validation: {
+                    ...validation,
+                    minSelections:
+                      event.target.value === "" ? undefined : Number(event.target.value),
+                  },
+                })
+              }
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label>Maximum selections</Label>
+            <Input
+              type="number"
+              min={1}
+              max={options.length}
+              value={(validation as { maxSelections?: number })?.maxSelections ?? ""}
+              onChange={(event) =>
+                update({
+                  validation: {
+                    ...validation,
+                    maxSelections:
+                      event.target.value === "" ? undefined : Number(event.target.value),
+                  },
+                })
+              }
+            />
+          </div>
+        </div>
+      )}
+      {field.kind === "textarea" && (
+        <div className="grid gap-2">
+          <Label>Visible rows</Label>
+          <Input
+            type="number"
+            min={2}
+            max={20}
+            value={typeof editable.rows === "number" ? editable.rows : ""}
+            onChange={(event) =>
+              update({
+                rows: event.target.value === "" ? undefined : Number(event.target.value),
+              })
+            }
+          />
         </div>
       )}
     </div>

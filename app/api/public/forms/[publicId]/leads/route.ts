@@ -82,21 +82,19 @@ export async function POST(
   if (!form) return NextResponse.json({ error: "form_not_found" }, { status: 404 });
   const corsHeaders = publicCorsHeaders(origin, Boolean(origin));
 
-  // Honeypot submissions receive a neutral success but never create a lead.
-  // Validate the signed session and origin first so cross-origin clients still
-  // receive the same CORS boundary as a real submission.
-  if (parsed.website) {
-    return NextResponse.json(
-      {
-        leadId: "accepted",
-        completion: { type: "message", message: "Thanks." },
-      },
-      { headers: corsHeaders }
-    );
-  }
-
   try {
     await enforceFormRateLimit({ formId: form.id, ip: clientIp(request) });
+    // Honeypot submissions count toward abuse limits, then receive a neutral
+    // success without creating a lead.
+    if (parsed.website) {
+      return NextResponse.json(
+        {
+          leadId: "accepted",
+          completion: { type: "message", message: "Thanks." },
+        },
+        { headers: corsHeaders }
+      );
+    }
     const result = await acceptLead({
       publicId,
       values: parsed.values,

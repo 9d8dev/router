@@ -102,6 +102,8 @@ export const getUsageForUser = authenticatedAction.action(
         stripeCurrentPeriodEnd: users.stripeCurrentPeriodEnd,
         stripeCancelAtPeriodEnd: users.stripeCancelAtPeriodEnd,
         stripeSubscriptionStatus: users.stripeSubscriptionStatus,
+        enterpriseMonthlyLeadLimit: users.enterpriseMonthlyLeadLimit,
+        enterpriseUnlimitedLeads: users.enterpriseUnlimitedLeads,
       })
       .from(users)
       .leftJoin(

@@ -13,6 +13,13 @@ export type StripeSubscriptionSnapshot = {
   cancelAtPeriodEnd: boolean;
 };
 
+export function shouldApplySubscriptionEvent(
+  storedSubscriptionId: string | null,
+  eventSubscriptionId: string
+): boolean {
+  return storedSubscriptionId === null || storedSubscriptionId === eventSubscriptionId;
+}
+
 export function subscriptionEntitlementState(
   subscription: StripeSubscriptionSnapshot
 ): {

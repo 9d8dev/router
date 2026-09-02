@@ -22,15 +22,52 @@ export const postStripeSession = authenticatedAction
     if (!priceId) throw new ActionError("The new Router price is not configured yet.");
     const host = (await headers()).get("host");
     const protocol = process.env.NODE_ENV === "production" ? "https" : "http";
-    const [{ email }] = await db
-      .select({ email: users.email })
+    const [account] = await db
+      .select({
+        email: users.email,
+        stripeCustomerId: users.stripeCustomerId,
+        stripeSubscriptionId: users.stripeSubscriptionId,
+      })
       .from(users)
       .where(eq(users.id, userId));
+    if (!account) throw new ActionError("User not found.");
 
-    const session = await getStripe().checkout.sessions.create({
+    const stripe = getStripe();
+    const returnUrl = `${protocol}://${host}/upgrade`;
+    if (account.stripeCustomerId && account.stripeSubscriptionId) {
+      const subscription = await stripe.subscriptions.retrieve(
+        account.stripeSubscriptionId
+      );
+      const item = subscription.items.data[0];
+      if (!item || subscription.items.data.length !== 1) {
+        throw new ActionError(
+          "This subscription cannot be changed automatically. Contact Router support."
+        );
+      }
+      const portal = await stripe.billingPortal.sessions.create({
+        customer: account.stripeCustomerId,
+        return_url: returnUrl,
+        flow_data: {
+          type: "subscription_update_confirm",
+          subscription_update_confirm: {
+            subscription: subscription.id,
+            items: [{ id: item.id, price: priceId, quantity: item.quantity }],
+          },
+          after_completion: {
+            type: "redirect",
+            redirect: { return_url: `${returnUrl}?subscription=updated` },
+          },
+        },
+      });
+      redirect(portal.url);
+    }
+
+    const session = await stripe.checkout.sessions.create({
       line_items: [{ price: priceId, quantity: 1 }],
       mode: "subscription",
-      customer_email: email,
+      ...(account.stripeCustomerId
+        ? { customer: account.stripeCustomerId }
+        : { customer_email: account.email }),
       success_url: `${protocol}://${host}/upgrade?checkout=success`,
       cancel_url: `${protocol}://${host}/upgrade`,
       allow_promotion_codes: true,

@@ -12,7 +12,7 @@ import { DataTable } from "@/components/groups/leads/data-table";
 import { columns } from "@/components/groups/leads/columns";
 import { getUsageForUser } from "@/lib/data/users";
 import { Usage } from "@/components/parts/usage";
-import { getEntitlement } from "@/lib/forms/entitlements";
+import { resolveMonthlyLeadLimit } from "@/lib/forms/entitlements";
 
 const pageData = {
   name: "Dashboard",
@@ -57,7 +57,10 @@ export default async function Page() {
   const recentLeads = leadsData.slice(0, 5);
 
   // get the lead limit for the user's plan
-  const leadLimit = getEntitlement(usageData.plan).monthlyLeads;
+  const leadLimit = resolveMonthlyLeadLimit(usageData.plan, {
+    monthlyLeadLimit: usageData.enterpriseMonthlyLeadLimit,
+    unlimitedLeads: usageData.enterpriseUnlimitedLeads,
+  });
 
   return (
     <>

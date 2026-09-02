@@ -339,6 +339,7 @@ export type CompiledEndpointField = {
     allowedValues?: string[];
     minItems?: number;
     maxItems?: number;
+    mustBeTrue?: boolean;
   };
 };
 
@@ -392,8 +393,12 @@ export function compileEndpointSchema(
           value: "string_array",
           constraints: {
             allowedValues: field.options.map((option) => option.value),
-            ...(field.validation?.minSelections !== undefined
-              ? { minItems: field.validation.minSelections }
+            ...(field.required || field.validation?.minSelections !== undefined
+              ? {
+                  minItems: field.required
+                    ? Math.max(1, field.validation?.minSelections ?? 0)
+                    : field.validation!.minSelections,
+                }
               : {}),
             ...(field.validation?.maxSelections !== undefined
               ? { maxItems: field.validation.maxSelections }
@@ -401,6 +406,11 @@ export function compileEndpointSchema(
           },
         };
       case "checkbox":
+        return {
+          ...base,
+          value: "boolean",
+          ...(field.required ? { constraints: { mustBeTrue: true } } : {}),
+        };
       case "yes-no":
       case "switch":
         return { ...base, value: "boolean" };

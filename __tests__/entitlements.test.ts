@@ -3,6 +3,7 @@ import {
   ENTITLEMENTS,
   getCapacityState,
   getEntitlement,
+  resolveMonthlyLeadLimit,
 } from "../lib/forms/entitlements";
 
 describe("Forms entitlements", () => {
@@ -36,5 +37,18 @@ describe("Forms entitlements", () => {
     expect(getCapacityState("free", 100)).toMatchObject({ state: "grace", accepts: true });
     expect(getCapacityState("free", 109)).toMatchObject({ state: "grace", accepts: true });
     expect(getCapacityState("free", 110)).toMatchObject({ state: "paused", accepts: false });
+  });
+
+  it("requires an explicit Enterprise contract allowance", () => {
+    expect(resolveMonthlyLeadLimit("enterprise", {})).toBe(0);
+    expect(
+      resolveMonthlyLeadLimit("enterprise", { monthlyLeadLimit: 125_000 })
+    ).toBe(125_000);
+    expect(
+      resolveMonthlyLeadLimit("enterprise", { unlimitedLeads: true })
+    ).toBeNull();
+    expect(
+      getCapacityState("enterprise", 137_500, { monthlyLeadLimit: 125_000 })
+    ).toMatchObject({ state: "paused", accepts: false, limit: 125_000 });
   });
 });

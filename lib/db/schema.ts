@@ -55,6 +55,10 @@ export const users = pgTable("user", {
   legacyPriceMigrationRequired: boolean("legacyPriceMigrationRequired")
     .notNull()
     .default(false),
+  enterpriseMonthlyLeadLimit: integer("enterpriseMonthlyLeadLimit"),
+  enterpriseUnlimitedLeads: boolean("enterpriseUnlimitedLeads")
+    .notNull()
+    .default(false),
   createdAt: timestamp("createdAt", { withTimezone: true })
     .notNull()
     .defaultNow(),

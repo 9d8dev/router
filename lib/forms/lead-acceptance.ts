@@ -15,8 +15,9 @@ import { formDefinitionV1Schema, validateFormValues } from "./definition";
 import { validateEndpointValues } from "./endpoint-schema";
 import {
   getCapacityState,
-  getEntitlement,
+  resolveMonthlyLeadLimit,
   type CapacityState,
+  type EnterpriseLeadContract,
   type RouterPlan,
 } from "./entitlements";
 import type { FormPlacement } from "./submission-token";
@@ -217,7 +218,11 @@ export async function acceptLead(
     }
 
     const plan = row.owner.plan as RouterPlan;
-    const entitlement = getEntitlement(plan);
+    const enterpriseContract: EnterpriseLeadContract = {
+      monthlyLeadLimit: row.owner.enterpriseMonthlyLeadLimit,
+      unlimitedLeads: row.owner.enterpriseUnlimitedLeads,
+    };
+    const monthlyLeadLimit = resolveMonthlyLeadLimit(plan, enterpriseContract);
     const periodStart = utcPeriodStart(now);
     const [usage] = await tx
       .insert(usagePeriods)
@@ -236,18 +241,18 @@ export async function acceptLead(
       });
 
     const graceLimit =
-      entitlement.monthlyLeads === null
+      monthlyLeadLimit === null
         ? null
-        : Math.round(entitlement.monthlyLeads * 1.1);
+        : Math.round(monthlyLeadLimit * 1.1);
     if (graceLimit !== null && usage.leadCount > graceLimit) {
       throw new LeadCapacityError(
-        getCapacityState(plan, usage.leadCount - 1)
+        getCapacityState(plan, usage.leadCount - 1, enterpriseContract)
       );
     }
 
     const usageNotifications: UsageThreshold[] = crossedUsageThresholds({
       used: usage.leadCount,
-      limit: entitlement.monthlyLeads,
+      limit: monthlyLeadLimit,
     }).filter((threshold) =>
       threshold === 80 ? usage.notifiedAt80 === null : usage.notifiedAt100 === null
     );
@@ -260,8 +265,8 @@ export async function acceptLead(
         .update(usagePeriods)
         .set(
           threshold === 80
-            ? { notificationLimit80: entitlement.monthlyLeads }
-            : { notificationLimit100: entitlement.monthlyLeads }
+            ? { notificationLimit80: monthlyLeadLimit }
+            : { notificationLimit100: monthlyLeadLimit }
         )
         .where(
           and(
@@ -314,7 +319,7 @@ export async function acceptLead(
     return {
       leadId: lead.id,
       completion,
-      capacity: getCapacityState(plan, usage.leadCount),
+      capacity: getCapacityState(plan, usage.leadCount, enterpriseContract),
       ownerId: row.owner.id,
       ownerEmail: row.owner.email,
       formId,

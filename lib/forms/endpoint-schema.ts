@@ -63,14 +63,23 @@ function fieldSchema(field: CompatibleEndpointField): z.ZodTypeAny {
     }
     case "number": {
       schema = numberSchemaWithConstraints(z.number().finite(), {
-        min: typeof constraints?.min === "number" ? constraints.min : undefined,
+        min:
+          typeof constraints?.min === "number"
+            ? constraints.min
+            : isLegacyField(field)
+              ? 0
+              : undefined,
         max: typeof constraints?.max === "number" ? constraints.max : undefined,
         step: constraints?.step,
       });
       break;
     }
     case "boolean":
-      schema = z.boolean();
+      schema = constraints?.mustBeTrue
+        ? z.literal(true, {
+            errorMap: () => ({ message: "This field must be accepted." }),
+          })
+        : z.boolean();
       break;
     case "string_array": {
       let arraySchema = z.array(z.string());

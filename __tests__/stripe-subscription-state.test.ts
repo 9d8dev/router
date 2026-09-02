@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   endedSubscriptionState,
   failedPaymentState,
+  shouldApplySubscriptionEvent,
   subscriptionEntitlementState,
 } from "../lib/forms/stripe-subscription-state";
 
@@ -63,5 +64,11 @@ describe("Stripe entitlement transitions", () => {
     expect(() => subscriptionEntitlementState(subscription("price_unknown"))).toThrow(
       "Unrecognized Stripe price"
     );
+  });
+
+  it("ignores events from a superseded subscription", () => {
+    expect(shouldApplySubscriptionEvent(null, "sub_legacy")).toBe(true);
+    expect(shouldApplySubscriptionEvent("sub_current", "sub_current")).toBe(true);
+    expect(shouldApplySubscriptionEvent("sub_current", "sub_legacy")).toBe(false);
   });
 });
