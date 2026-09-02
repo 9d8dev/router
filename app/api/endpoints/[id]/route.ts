@@ -8,6 +8,10 @@ import {
   LeadEndpointError,
   LeadValidationError,
 } from "@/lib/forms/lead-acceptance";
+import {
+  PayloadTooLargeError,
+  readLimitedJsonBody,
+} from "@/lib/forms/request-body";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -37,18 +41,6 @@ function errorResponse(error: unknown): NextResponse {
   return NextResponse.json({ error: "internal_error" }, { status: 500 });
 }
 
-async function readJsonBody(request: Request): Promise<unknown> {
-  const declaredLength = Number(request.headers.get("content-length") ?? 0);
-  if (declaredLength > MAX_BODY_BYTES) {
-    throw new Response("Payload too large", { status: 413 });
-  }
-  const body = await request.text();
-  if (Buffer.byteLength(body, "utf8") > MAX_BODY_BYTES) {
-    throw new Response("Payload too large", { status: 413 });
-  }
-  return JSON.parse(body);
-}
-
 /** Legacy bearer-token endpoint. Its URL and authentication contract are unchanged. */
 export async function POST(
   request: Request,
@@ -75,7 +67,7 @@ export async function POST(
   }
 
   try {
-    const values = await readJsonBody(request);
+    const values = await readLimitedJsonBody(request, MAX_BODY_BYTES);
     const result = await acceptLead({
       endpointId: id,
       values,
@@ -83,7 +75,9 @@ export async function POST(
     });
     return NextResponse.json({ success: true, id: result.leadId });
   } catch (error) {
-    if (error instanceof Response) return error;
+    if (error instanceof PayloadTooLargeError) {
+      return new NextResponse("Payload too large", { status: 413 });
+    }
     if (error instanceof SyntaxError) {
       return NextResponse.json({ error: "invalid_json" }, { status: 400 });
     }

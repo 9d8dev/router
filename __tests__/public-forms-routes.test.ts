@@ -9,9 +9,10 @@ const mocks = vi.hoisted(() => ({
   enforceFormRateLimit: vi.fn(),
   getPublishedForm: vi.fn(),
   isApprovedFormOrigin: vi.fn(),
+  publicFormOptionsResponse: vi.fn(),
 }));
 
-vi.mock("@/lib/data/forms", () => ({
+vi.mock("@/lib/data/public-forms", () => ({
   getPublishedForm: mocks.getPublishedForm,
 }));
 
@@ -42,6 +43,7 @@ vi.mock("@/lib/forms/public-access", () => ({
     if (origin && approved) headers.set("Access-Control-Allow-Origin", origin);
     return headers;
   },
+  publicFormOptionsResponse: mocks.publicFormOptionsResponse,
 }));
 
 vi.mock("@/lib/forms/rate-limit", () => {
@@ -58,8 +60,17 @@ vi.mock("@/lib/forms/feature-flags", () => ({
   publicFormsEnabled: () => true,
 }));
 
-import { POST as createRenderSession } from "../app/api/public/forms/[publicId]/render-session/route";
-import { POST as submitLead } from "../app/api/public/forms/[publicId]/leads/route";
+import {
+  OPTIONS as formOptions,
+} from "../app/api/public/forms/[publicId]/route";
+import {
+  OPTIONS as renderSessionOptions,
+  POST as createRenderSession,
+} from "../app/api/public/forms/[publicId]/render-session/route";
+import {
+  OPTIONS as leadOptions,
+  POST as submitLead,
+} from "../app/api/public/forms/[publicId]/leads/route";
 
 const secret = "route-test-secret-with-enough-entropy";
 const publicId = "form_public_1";
@@ -110,7 +121,32 @@ describe("public form route origin enforcement", () => {
     mocks.getPublishedForm.mockResolvedValue({ id: "form_1", revision: 7 });
     mocks.isApprovedFormOrigin.mockReset();
     mocks.isApprovedFormOrigin.mockResolvedValue(true);
+    mocks.publicFormOptionsResponse.mockReset();
+    mocks.publicFormOptionsResponse.mockResolvedValue(
+      new Response(null, {
+        status: 204,
+        headers: { "Access-Control-Allow-Origin": "https://site.example" },
+      })
+    );
   });
+
+  it.each([formOptions, renderSessionOptions, leadOptions])(
+    "uses the shared preflight policy for every public form endpoint",
+    async (options) => {
+      const request = new Request(
+        `https://forms.router.so/api/public/forms/${publicId}`,
+        { method: "OPTIONS", headers: { origin: "https://site.example" } }
+      );
+
+      const response = await options(request, params);
+
+      expect(response.status).toBe(204);
+      expect(mocks.publicFormOptionsResponse).toHaveBeenCalledWith(
+        request,
+        publicId
+      );
+    }
+  );
 
   it("mints an origin-bound token only for the exact hosted origin", async () => {
     const response = await createRenderSession(
@@ -167,6 +203,32 @@ describe("public form route origin enforcement", () => {
 
     expect(response.status).toBe(401);
     expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    expect(mocks.acceptLead).not.toHaveBeenCalled();
+  });
+
+  it("cancels an oversized chunked body as soon as the payload ceiling is crossed", async () => {
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(64 * 1024 + 1));
+      },
+      cancel,
+    });
+    const request = new Request(
+      `https://forms.router.so/api/public/forms/${publicId}/leads`,
+      {
+        method: "POST",
+        headers: { origin: "https://forms.router.so" },
+        body,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" }
+    );
+
+    const response = await submitLead(request, params);
+
+    expect(response.status).toBe(413);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(mocks.enforceFormRateLimit).not.toHaveBeenCalled();
     expect(mocks.acceptLead).not.toHaveBeenCalled();
   });
 

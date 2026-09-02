@@ -90,6 +90,7 @@ export function PlanTiles({ usage }: { usage: Usage }) {
           const entitlement = ENTITLEMENTS[plan.id];
           const isCurrent = usage.plan === plan.id && !usage.legacyPriceMigrationRequired;
           const price = interval === "annual" ? entitlement.annualPrice : entitlement.monthlyPrice;
+          const isFree = plan.id === "free";
           return (
             <article
               key={plan.id}
@@ -101,7 +102,9 @@ export function PlanTiles({ usage }: { usage: Usage }) {
               {isCurrent && <Badge className="absolute -top-3 left-5">Current</Badge>}
               <div><h3 className="text-xl font-semibold">{plan.name}</h3><p className="mt-1 min-h-10 text-sm text-muted-foreground">{plan.description}</p></div>
               <div>
-                {price === null ? (
+                {isFree ? (
+                  <p className="text-3xl font-semibold">$0</p>
+                ) : price === null ? (
                   <p className="text-2xl font-semibold">Custom</p>
                 ) : (
                   <p className="text-3xl font-semibold">${price}<span className="text-sm font-normal text-muted-foreground">/{interval === "annual" ? "year" : "month"}</span></p>

@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
-import { getPublishedForm } from "@/lib/data/forms";
-import { isApprovedFormOrigin, publicCorsHeaders } from "@/lib/forms/public-access";
+import { getPublishedForm } from "@/lib/data/public-forms";
+import {
+  isApprovedFormOrigin,
+  publicCorsHeaders,
+  publicFormOptionsResponse,
+} from "@/lib/forms/public-access";
 import { requestOrigin } from "@/lib/forms/origins";
 import { publicFormsEnabled } from "@/lib/forms/feature-flags";
 import { publishedFormEtag } from "@/lib/forms/cache";
@@ -57,13 +61,5 @@ export async function OPTIONS(
 ) {
   if (!publicFormsEnabled()) return new NextResponse(null, { status: 404 });
   const { publicId } = await params;
-  const origin = requestOrigin(request);
-  const approved = origin
-    ? (await isApprovedFormOrigin({ publicId, origin, placement: "embed" })) ||
-      (await isApprovedFormOrigin({ publicId, origin, placement: "wordpress" }))
-    : false;
-  return new NextResponse(null, {
-    status: approved ? 204 : 403,
-    headers: publicCorsHeaders(origin, approved),
-  });
+  return publicFormOptionsResponse(request, publicId);
 }

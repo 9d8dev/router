@@ -10,15 +10,33 @@ export type StripeSubscriptionSnapshot = {
   customerId: string;
   subscriptionId: string;
   status: string;
+  createdAt: number;
   currentPeriodEnd: number;
   cancelAtPeriodEnd: boolean;
 };
 
-export function shouldApplySubscriptionEvent(
-  storedSubscriptionId: string | null,
-  eventSubscriptionId: string
-): boolean {
-  return storedSubscriptionId === null || storedSubscriptionId === eventSubscriptionId;
+export function isTerminalSubscriptionStatus(status: string | null): boolean {
+  return status === "canceled" || status === "incomplete_expired";
+}
+
+export function shouldApplySubscriptionEvent(input: {
+  storedSubscriptionId: string | null;
+  storedSubscriptionStatus: string | null;
+  storedSubscriptionCreatedAt: Date | null;
+  eventSubscriptionId: string;
+  eventCreatedAt: Date;
+}): boolean {
+  if (input.storedSubscriptionId === null) return true;
+  if (input.storedSubscriptionId === input.eventSubscriptionId) {
+    return !isTerminalSubscriptionStatus(input.storedSubscriptionStatus);
+  }
+  if (!isTerminalSubscriptionStatus(input.storedSubscriptionStatus)) {
+    return false;
+  }
+  return (
+    input.storedSubscriptionCreatedAt !== null &&
+    input.eventCreatedAt > input.storedSubscriptionCreatedAt
+  );
 }
 
 export function shouldClearScheduledCancellation(input: {
@@ -54,6 +72,7 @@ export function subscriptionEntitlementState(
   stripeCustomerId: string;
   stripeSubscriptionId: string;
   stripeSubscriptionStatus: string;
+  stripeSubscriptionCreatedAt: Date;
   stripeCurrentPeriodEnd: Date;
   stripeCancelAtPeriodEnd: boolean;
   legacyPriceMigrationRequired: boolean;
@@ -71,17 +90,23 @@ export function subscriptionEntitlementState(
     stripeCustomerId: subscription.customerId,
     stripeSubscriptionId: subscription.subscriptionId,
     stripeSubscriptionStatus: subscription.status,
+    stripeSubscriptionCreatedAt: new Date(subscription.createdAt * 1_000),
     stripeCurrentPeriodEnd: new Date(subscription.currentPeriodEnd * 1_000),
     stripeCancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
     legacyPriceMigrationRequired: Boolean(legacyPlan),
   };
 }
 
-export function endedSubscriptionState(status: string) {
+export function endedSubscriptionState(
+  status: string,
+  subscriptionId: string,
+  subscriptionCreatedAt: number
+) {
   return {
     plan: "free" as const,
-    stripeSubscriptionId: null,
+    stripeSubscriptionId: subscriptionId,
     stripeSubscriptionStatus: status,
+    stripeSubscriptionCreatedAt: new Date(subscriptionCreatedAt * 1_000),
     stripeCurrentPeriodEnd: null,
     stripeCancelAtPeriodEnd: false,
     legacyPriceMigrationRequired: false,

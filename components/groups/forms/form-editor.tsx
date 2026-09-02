@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { FormDefinitionV1, FormFieldV1 } from "@/lib/forms/definition";
+import type { CompatibleEndpointField } from "@/lib/forms/endpoint-schema";
 import {
   formDefinitionV1Schema,
   hasEndpointSchemaChanged,
@@ -55,6 +56,7 @@ import {
   normalizeSubmissionKey,
 } from "@/lib/forms/field-identity";
 import { createLatestSaveQueue } from "@/lib/forms/latest-save-queue";
+import { hasEndpointSchemaChangedFromEndpoint } from "@/lib/forms/starters";
 
 declare global {
   interface Window {
@@ -73,6 +75,7 @@ type EditorForm = {
   name: string;
   endpointId: string;
   endpointName: string;
+  endpointSchema: CompatibleEndpointField[];
   attachedToExistingEndpoint: boolean;
   draftDefinition: FormDefinitionV1;
   draftRevision: number;
@@ -222,8 +225,11 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
   const selected = definition.fields.find((field) => field.id === selectedId) ?? null;
   const embedCode = `<div data-router-form="${form.publicId}"></div>\n<script async src="https://forms.router.so/embed/v1.js"></script>`;
   const schemaChanged = useMemo(
-    () => hasEndpointSchemaChanged(definition, form.publishedDefinition),
-    [definition, form.publishedDefinition]
+    () =>
+      form.publishedDefinition
+        ? hasEndpointSchemaChanged(definition, form.publishedDefinition)
+        : hasEndpointSchemaChangedFromEndpoint(definition, form.endpointSchema),
+    [definition, form.endpointSchema, form.publishedDefinition]
   );
 
   function updateSelected(patch: Record<string, unknown>) {

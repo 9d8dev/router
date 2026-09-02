@@ -589,7 +589,16 @@ function schemaForField(field: FormFieldV1): z.ZodTypeAny {
         z.coerce.number().finite("Enter a valid number."),
         field.validation
       );
-      return field.required ? schema : z.preprocess((value) => (value === "" ? undefined : value), schema.optional());
+      const optionalSchema = z.preprocess(
+        (value) => (value === "" ? undefined : value),
+        schema.optional()
+      );
+      return field.required
+        ? optionalSchema.refine(
+            (value) => value !== undefined,
+            "This field is required."
+          )
+        : optionalSchema;
     }
     case "select":
     case "radio": {

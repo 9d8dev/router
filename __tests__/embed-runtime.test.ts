@@ -30,6 +30,50 @@ const definition: FormDefinitionV1 = {
   ],
 };
 
+type Runtime = {
+  mount: (target: Element, options?: object) => Promise<void>;
+};
+
+async function mountLiveForm(liveDefinition: FormDefinitionV1) {
+  const submissions: Array<Record<string, unknown>> = [];
+  const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+    const requestUrl = String(url);
+    if (requestUrl.endsWith("/render-session")) {
+      return new Response(
+        JSON.stringify({ submitToken: "token", revision: 1, expiresIn: 3600 }),
+        { status: 200 }
+      );
+    }
+    if (requestUrl.endsWith("/leads")) {
+      submissions.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(
+        JSON.stringify({
+          leadId: "lead_1",
+          completion: liveDefinition.completion,
+        }),
+        { status: 200 }
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        publicId: "live-form",
+        revision: 1,
+        definition: liveDefinition,
+        attribution: { visible: false },
+      }),
+      { status: 200 }
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  const target = document.createElement("div");
+  target.setAttribute("data-router-form", "live-form");
+  document.body.appendChild(target);
+  const runtime = (window as unknown as { RouterFormsV1: Runtime }).RouterFormsV1;
+  await runtime.mount(target);
+  return { target, submissions };
+}
+
 describe("embed v1 runtime", () => {
   beforeEach(() => {
     document.head.innerHTML = "";
@@ -77,6 +121,78 @@ describe("embed v1 runtime", () => {
     expect(first.querySelector("form")).not.toBeNull();
     expect(second.querySelector("form")).not.toBeNull();
     expect(document.querySelectorAll("#router-forms-v1-styles")).toHaveLength(1);
+  });
+
+  it("keeps a legitimate website field separate from the honeypot", async () => {
+    const { target, submissions } = await mountLiveForm({
+      ...definition,
+      fields: [
+        {
+          id: "website",
+          key: "website",
+          kind: "url",
+          label: "Website",
+          required: true,
+        },
+      ],
+    });
+    const website = target.querySelector<HTMLInputElement>(
+      '[data-router-field="website"] input'
+    )!;
+    website.value = "https://example.com";
+
+    target.querySelector("form")!.dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    await vi.waitFor(() => expect(submissions).toHaveLength(1));
+
+    expect(submissions[0]).toMatchObject({
+      values: { website: "https://example.com" },
+      website: "",
+    });
+  });
+
+  it("omits an untouched optional slider without a default", async () => {
+    const { target, submissions } = await mountLiveForm({
+      ...definition,
+      fields: [
+        {
+          id: "score",
+          key: "score",
+          kind: "slider",
+          label: "Score",
+          required: false,
+          validation: { min: 1, max: 10, step: 1 },
+        },
+      ],
+    });
+
+    target.querySelector("form")!.dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    await vi.waitFor(() => expect(submissions).toHaveLength(1));
+
+    expect(submissions[0].values).toEqual({});
+  });
+
+  it("announces and focuses an inline completion message", async () => {
+    const { target } = await mountLiveForm({
+      ...definition,
+      fields: [],
+      completion: { type: "message", message: "Submission received." },
+    });
+
+    target.querySelector("form")!.dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    await vi.waitFor(() =>
+      expect(target.querySelector('[role="status"]')).not.toBeNull()
+    );
+
+    const status = target.querySelector<HTMLElement>('[role="status"]')!;
+    expect(status.textContent).toBe("Submission received.");
+    expect(status.getAttribute("aria-live")).toBe("polite");
+    expect(document.activeElement).toBe(status);
   });
 
   it("refreshes a cached definition that does not match the render session", async () => {

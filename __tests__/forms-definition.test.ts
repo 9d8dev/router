@@ -9,6 +9,7 @@ import {
 import { validateEndpointValues } from "../lib/forms/endpoint-schema";
 import {
   isEndpointSchemaCompatible,
+  hasEndpointSchemaChangedFromEndpoint,
   seedDefinitionFromEndpoint,
 } from "../lib/forms/starters";
 import { allocateSubmissionKey } from "../lib/forms/field-identity";
@@ -212,6 +213,45 @@ describe("FormDefinitionV1", () => {
     expect(() => seedDefinitionFromEndpoint("Tags", unsupported)).toThrow(
       "cannot be represented"
     );
+
+    const tooManyFields = Array.from({ length: 101 }, (_, index) => ({
+      key: `field_${index}`,
+      value: "string" as const,
+    }));
+    const tooManyOptions = [
+      {
+        key: "choice",
+        value: "string" as const,
+        constraints: {
+          allowedValues: Array.from({ length: 101 }, (_, index) => `option_${index}`),
+        },
+      },
+    ];
+    expect(isEndpointSchemaCompatible(tooManyFields)).toBe(false);
+    expect(isEndpointSchemaCompatible(tooManyOptions)).toBe(false);
+  });
+
+  it("compares an attached form's first publication with the endpoint contract", () => {
+    const endpointSchema = [
+      { key: "name", value: "string" as const },
+      { key: "score", value: "number" as const },
+    ];
+    const seeded = seedDefinitionFromEndpoint("Qualification", endpointSchema);
+
+    expect(
+      hasEndpointSchemaChangedFromEndpoint(seeded, endpointSchema)
+    ).toBe(false);
+    expect(
+      hasEndpointSchemaChangedFromEndpoint(
+        {
+          ...seeded,
+          fields: seeded.fields.map((field) =>
+            field.key === "score" ? { ...field, required: false } : field
+          ),
+        },
+        endpointSchema
+      )
+    ).toBe(true);
   });
 
   it("preserves supported legacy constraints when seeding an attached form", () => {
@@ -370,6 +410,27 @@ describe("validateFormValues", () => {
         endpointToken: ["Unknown field."],
       });
     }
+  });
+
+  it("rejects an empty string for a required numeric field", () => {
+    const definition = formDefinitionV1Schema.parse({
+      ...contactForm,
+      fields: [
+        {
+          id: "fld_count",
+          key: "count",
+          kind: "number",
+          label: "Count",
+          required: true,
+          validation: { min: 0 },
+        },
+      ],
+    });
+
+    expect(validateFormValues(definition, { count: "" })).toMatchObject({
+      success: false,
+      errors: { count: ["This field is required."] },
+    });
   });
 
   it("enforces every authored string and number constraint", () => {

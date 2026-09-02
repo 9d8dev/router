@@ -1,7 +1,9 @@
-import type {
-  CompiledEndpointField,
-  FormDefinitionV1,
-  FormFieldV1,
+import {
+  compileEndpointSchema,
+  formDefinitionV1Schema,
+  type CompiledEndpointField,
+  type FormDefinitionV1,
+  type FormFieldV1,
 } from "./definition";
 
 export type StarterId = "blank" | "contact" | "lead-capture" | "feedback" | "newsletter";
@@ -125,12 +127,14 @@ function hasUsableAllowedValues(field: EndpointSeedField): boolean {
   const values = field.constraints?.allowedValues;
   return Boolean(
     values?.length &&
+      values.length <= 100 &&
       new Set(values).size === values.length &&
       values.every((value) => value.trim().length > 0 && value.length <= 120)
   );
 }
 
 export function isEndpointSchemaCompatible(schema: EndpointSeedField[]): boolean {
+  if (schema.length > 100) return false;
   const keys = new Set<string>();
   return schema.every((field) => {
     if (
@@ -290,4 +294,17 @@ export function seedDefinitionFromEndpoint(
     submitLabel: "Submit",
     completion,
   } as FormDefinitionV1;
+}
+
+export function hasEndpointSchemaChangedFromEndpoint(
+  draftInput: unknown,
+  endpointSchema: EndpointSeedField[]
+): boolean {
+  const draft = formDefinitionV1Schema.safeParse(draftInput);
+  if (!draft.success || !isEndpointSchemaCompatible(endpointSchema)) return true;
+  const baseline = seedDefinitionFromEndpoint("Endpoint", endpointSchema);
+  return (
+    JSON.stringify(compileEndpointSchema(draft.data)) !==
+    JSON.stringify(compileEndpointSchema(baseline))
+  );
 }

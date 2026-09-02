@@ -99,6 +99,13 @@
       "when": 1788322397797,
       "tag": "0013_tiny_giant_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1788390961464,
+      "tag": "0014_furry_wolfpack",
+      "breakpoints": true
     }
   ]
 }

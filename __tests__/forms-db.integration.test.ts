@@ -76,6 +76,17 @@ suite("Forms PostgreSQL integration through production services", () => {
     formId = form.id;
   });
 
+  it("indexes form-filtered leads by creation time", async () => {
+    const result = await pool.query<{ indexdef: string }>(`
+      SELECT indexdef
+      FROM pg_indexes
+      WHERE schemaname = 'public' AND indexname = 'lead_form_created_idx'
+    `);
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].indexdef).toContain('(\"formId\", \"createdAt\")');
+  });
+
   afterAll(async () => {
     for (const id of userIds) {
       await database.delete(users).where(eq(users.id, id));
@@ -319,5 +330,64 @@ suite("Forms PostgreSQL integration through production services", () => {
       })
     );
     fetchMock.mockRestore();
+  });
+
+  it("keeps an accepted lead successful when post-commit webhook logging fails", async () => {
+    const [endpoint] = await database
+      .insert(endpoints)
+      .values({
+        userId,
+        name: "Webhook logging failure endpoint",
+        schema: [{ key: "email", value: "email", required: true }],
+        webhookEnabled: true,
+        webhook: "https://hooks.example.com/router",
+        token: "webhook-log-failure-token",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning({ id: endpoints.id });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await pool.query(`
+      CREATE FUNCTION reject_webhook_logs() RETURNS trigger AS $$
+      BEGIN
+        IF NEW."postType" = 'webhook' THEN
+          RAISE EXCEPTION 'webhook log storage unavailable';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER reject_webhook_logs
+      BEFORE INSERT ON "log"
+      FOR EACH ROW EXECUTE FUNCTION reject_webhook_logs();
+    `);
+
+    try {
+      const accepted = await acceptLead(
+        {
+          endpointId: endpoint.id,
+          placement: "headless",
+          values: { email: "accepted@example.com" },
+        },
+        new Date(),
+        serviceDatabase
+      );
+
+      expect(accepted.leadId).toBeTruthy();
+      expect(
+        await database
+          .select({ id: leads.id })
+          .from(leads)
+          .where(eq(leads.id, accepted.leadId))
+      ).toHaveLength(1);
+    } finally {
+      await pool.query('DROP TRIGGER reject_webhook_logs ON "log"');
+      await pool.query("DROP FUNCTION reject_webhook_logs()");
+      fetchMock.mockRestore();
+      consoleError.mockRestore();
+    }
   });
 });

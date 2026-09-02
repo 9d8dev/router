@@ -1,7 +1,8 @@
 import { and, eq } from "drizzle-orm";
+import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { formOrigins, forms } from "@/lib/db/schema";
-import { normalizeOrigin } from "./origins";
+import { normalizeOrigin, requestOrigin } from "./origins";
 import type { FormPlacement } from "./submission-token";
 
 export async function isApprovedFormOrigin(input: {
@@ -34,4 +35,27 @@ export function publicCorsHeaders(origin: string | null, approved: boolean) {
     headers.set("Access-Control-Max-Age", "600");
   }
   return headers;
+}
+
+export async function publicFormOptionsResponse(
+  request: Request,
+  publicId: string
+): Promise<NextResponse> {
+  const normalizedOrigin = requestOrigin(request);
+  const approved = normalizedOrigin
+    ? (await isApprovedFormOrigin({
+        publicId,
+        origin: normalizedOrigin,
+        placement: "embed",
+      })) ||
+      (await isApprovedFormOrigin({
+        publicId,
+        origin: normalizedOrigin,
+        placement: "wordpress",
+      }))
+    : false;
+  return new NextResponse(null, {
+    status: approved ? 204 : 403,
+    headers: publicCorsHeaders(normalizedOrigin, approved),
+  });
 }

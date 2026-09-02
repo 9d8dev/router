@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
@@ -9,25 +9,43 @@ import {
   planForNewPrice,
 } from "@/lib/constants/stripe";
 import { getStripe } from "@/lib/utils/stripe-client";
-import { getUserPublishedFormIds } from "@/lib/data/forms";
+import { getUserPublishedFormIds } from "@/lib/data/public-forms";
 import { invalidatePublishedForm } from "@/lib/forms/cache";
 import {
   endedSubscriptionState,
   failedPaymentState,
   invoiceSubscriptionId,
+  isTerminalSubscriptionStatus,
   shouldApplySubscriptionEvent,
   shouldClearScheduledCancellation,
   subscriptionEntitlementState,
 } from "@/lib/forms/stripe-subscription-state";
 
-async function subscriptionOwner(subscription: Stripe.Subscription) {
+type SubscriptionOwner = {
+  id: string;
+  stripeSubscriptionId: string | null;
+  stripeSubscriptionStatus: string | null;
+  stripeSubscriptionCreatedAt: Date | null;
+  legacyPriceMigrationRequired: boolean;
+};
+
+async function subscriptionOwner(
+  subscription: Stripe.Subscription,
+  fallback: { userId?: string; email?: string } = {}
+): Promise<SubscriptionOwner | null> {
   const userCondition = subscription.metadata.routerUserId
     ? eq(users.id, subscription.metadata.routerUserId)
-    : eq(users.stripeCustomerId, subscription.customer as string);
+    : fallback.userId
+      ? eq(users.id, fallback.userId)
+      : fallback.email
+        ? eq(users.email, fallback.email)
+        : eq(users.stripeCustomerId, subscription.customer as string);
   const [owner] = await db
     .select({
       id: users.id,
       stripeSubscriptionId: users.stripeSubscriptionId,
+      stripeSubscriptionStatus: users.stripeSubscriptionStatus,
+      stripeSubscriptionCreatedAt: users.stripeSubscriptionCreatedAt,
       legacyPriceMigrationRequired: users.legacyPriceMigrationRequired,
     })
     .from(users)
@@ -35,30 +53,48 @@ async function subscriptionOwner(subscription: Stripe.Subscription) {
     .limit(1);
   if (
     !owner ||
-    !shouldApplySubscriptionEvent(owner.stripeSubscriptionId, subscription.id)
+    !shouldApplySubscriptionEvent({
+      storedSubscriptionId: owner.stripeSubscriptionId,
+      storedSubscriptionStatus: owner.stripeSubscriptionStatus,
+      storedSubscriptionCreatedAt: owner.stripeSubscriptionCreatedAt,
+      eventSubscriptionId: subscription.id,
+      eventCreatedAt: new Date(subscription.created * 1_000),
+    })
   ) {
     return null;
   }
   return owner;
 }
 
-function currentSubscriptionCondition(userId: string, subscriptionId: string) {
+function subscriptionSnapshotCondition(owner: SubscriptionOwner) {
   return and(
-    eq(users.id, userId),
-    or(
-      isNull(users.stripeSubscriptionId),
-      eq(users.stripeSubscriptionId, subscriptionId)
-    )
+    eq(users.id, owner.id),
+    owner.stripeSubscriptionId === null
+      ? isNull(users.stripeSubscriptionId)
+      : eq(users.stripeSubscriptionId, owner.stripeSubscriptionId),
+    owner.stripeSubscriptionStatus === null
+      ? isNull(users.stripeSubscriptionStatus)
+      : eq(users.stripeSubscriptionStatus, owner.stripeSubscriptionStatus),
+    owner.stripeSubscriptionCreatedAt === null
+      ? isNull(users.stripeSubscriptionCreatedAt)
+      : eq(users.stripeSubscriptionCreatedAt, owner.stripeSubscriptionCreatedAt)
   );
 }
 
 async function updateSubscription(
   subscription: Stripe.Subscription,
-  stripe: Stripe
+  stripe: Stripe,
+  options: {
+    fallback?: { userId?: string; email?: string };
+    refresh?: boolean;
+  } = {}
 ) {
-  const owner = await subscriptionOwner(subscription);
+  const owner = await subscriptionOwner(subscription, options.fallback);
   if (!owner) return;
-  let currentSubscription = subscription;
+  let currentSubscription =
+    options.refresh === false
+      ? subscription
+      : await stripe.subscriptions.retrieve(subscription.id);
   let priceId = currentSubscription.items.data[0]?.price.id;
   if (!priceId) throw new Error("Subscription has no price.");
   if (
@@ -74,19 +110,26 @@ async function updateSubscription(
     priceId = currentSubscription.items.data[0]?.price.id;
     if (!priceId) throw new Error("Subscription has no price.");
   }
-  const state = subscriptionEntitlementState({
-    priceId,
-    customerId: currentSubscription.customer as string,
-    subscriptionId: currentSubscription.id,
-    status: currentSubscription.status,
-    currentPeriodEnd: currentSubscription.current_period_end,
-    cancelAtPeriodEnd: currentSubscription.cancel_at_period_end,
-  });
+  const state = isTerminalSubscriptionStatus(currentSubscription.status)
+    ? endedSubscriptionState(
+        currentSubscription.status,
+        currentSubscription.id,
+        currentSubscription.created
+      )
+    : subscriptionEntitlementState({
+        priceId,
+        customerId: currentSubscription.customer as string,
+        subscriptionId: currentSubscription.id,
+        status: currentSubscription.status,
+        createdAt: currentSubscription.created,
+        currentPeriodEnd: currentSubscription.current_period_end,
+        cancelAtPeriodEnd: currentSubscription.cancel_at_period_end,
+      });
 
   const [updated] = await db
     .update(users)
     .set(state)
-    .where(currentSubscriptionCondition(owner.id, subscription.id))
+    .where(subscriptionSnapshotCondition(owner))
     .returning({ id: users.id });
 
   if (updated) {
@@ -114,37 +157,26 @@ export async function POST(request: Request) {
 
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
-      const lineItems = await stripe.checkout.sessions.listLineItems(session.id);
-      const priceId = lineItems.data[0]?.price?.id;
-      const plan = priceId ? planForNewPrice(priceId) : null;
-      if (!plan) throw new Error("Checkout used an unrecognized or retired price.");
+      const subscriptionId =
+        typeof session.subscription === "string"
+          ? session.subscription
+          : session.subscription?.id;
+      if (!subscriptionId) throw new Error("Checkout has no subscription.");
       if (!session.metadata?.routerUserId && !session.customer_details?.email) {
         throw new Error("Checkout has no Router user or customer email.");
       }
-      const userCondition = session.metadata?.routerUserId
-        ? eq(users.id, session.metadata.routerUserId)
-        : eq(users.email, session.customer_details!.email!);
-      const [updated] = await db
-        .update(users)
-        .set({
-          plan,
-          stripeCustomerId: session.customer as string,
-          stripeSubscriptionId: session.subscription as string,
-          legacyPriceMigrationRequired: false,
-        })
-        .where(
-          and(
-            userCondition,
-            or(
-              isNull(users.stripeSubscriptionId),
-              eq(users.stripeSubscriptionId, session.subscription as string)
-            )
-          )
-        )
-        .returning({ id: users.id });
-      if (updated) {
-        (await getUserPublishedFormIds(updated.id)).forEach(invalidatePublishedForm);
+      const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+      const priceId = subscription.items.data[0]?.price.id;
+      if (!priceId || !planForNewPrice(priceId)) {
+        throw new Error("Checkout used an unrecognized or retired price.");
       }
+      await updateSubscription(subscription, stripe, {
+        fallback: {
+          userId: session.metadata?.routerUserId,
+          email: session.customer_details?.email ?? undefined,
+        },
+        refresh: false,
+      });
     }
 
     if (
@@ -162,8 +194,14 @@ export async function POST(request: Request) {
       }
       const [updated] = await db
         .update(users)
-        .set(endedSubscriptionState(subscription.status))
-        .where(currentSubscriptionCondition(owner.id, subscription.id))
+        .set(
+          endedSubscriptionState(
+            subscription.status,
+            subscription.id,
+            subscription.created
+          )
+        )
+        .where(subscriptionSnapshotCondition(owner))
         .returning({ id: users.id });
       if (updated) {
         (await getUserPublishedFormIds(updated.id)).forEach(invalidatePublishedForm);
@@ -174,15 +212,26 @@ export async function POST(request: Request) {
       const invoice = event.data.object;
       const subscriptionId = invoiceSubscriptionId(invoice.subscription);
       if (subscriptionId) {
-        await db
-          .update(users)
-          .set(failedPaymentState())
-          .where(
-            and(
-              eq(users.stripeCustomerId, invoice.customer as string),
-              eq(users.stripeSubscriptionId, subscriptionId)
-            )
-          );
+        const [owner] = await db
+          .select({
+            id: users.id,
+            stripeSubscriptionId: users.stripeSubscriptionId,
+            stripeSubscriptionStatus: users.stripeSubscriptionStatus,
+            stripeSubscriptionCreatedAt: users.stripeSubscriptionCreatedAt,
+            legacyPriceMigrationRequired: users.legacyPriceMigrationRequired,
+          })
+          .from(users)
+          .where(eq(users.stripeCustomerId, invoice.customer as string))
+          .limit(1);
+        if (
+          owner?.stripeSubscriptionId === subscriptionId &&
+          !isTerminalSubscriptionStatus(owner.stripeSubscriptionStatus)
+        ) {
+          await db
+            .update(users)
+            .set(failedPaymentState())
+            .where(subscriptionSnapshotCondition(owner));
+        }
       }
     }
 
@@ -195,6 +244,7 @@ export async function POST(request: Request) {
           stripeCustomerId: null,
           stripeSubscriptionId: null,
           stripeSubscriptionStatus: null,
+          stripeSubscriptionCreatedAt: null,
           stripeCurrentPeriodEnd: null,
           stripeCancelAtPeriodEnd: false,
           legacyPriceMigrationRequired: false,

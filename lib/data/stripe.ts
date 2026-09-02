@@ -9,7 +9,10 @@ import { db } from "../db";
 import { users } from "../db/schema";
 import { configuredPriceId } from "@/lib/constants/stripe";
 import { getStripe } from "@/lib/utils/stripe-client";
-import { stripeCheckoutMetadata } from "@/lib/forms/stripe-subscription-state";
+import {
+  isTerminalSubscriptionStatus,
+  stripeCheckoutMetadata,
+} from "@/lib/forms/stripe-subscription-state";
 
 const createStripeSessionSchema = z.object({
   plan: z.enum(["pro", "business"]),
@@ -28,6 +31,7 @@ export const postStripeSession = authenticatedAction
         email: users.email,
         stripeCustomerId: users.stripeCustomerId,
         stripeSubscriptionId: users.stripeSubscriptionId,
+        stripeSubscriptionStatus: users.stripeSubscriptionStatus,
       })
       .from(users)
       .where(eq(users.id, userId));
@@ -35,7 +39,11 @@ export const postStripeSession = authenticatedAction
 
     const stripe = getStripe();
     const returnUrl = `${protocol}://${host}/upgrade`;
-    if (account.stripeCustomerId && account.stripeSubscriptionId) {
+    if (
+      account.stripeCustomerId &&
+      account.stripeSubscriptionId &&
+      !isTerminalSubscriptionStatus(account.stripeSubscriptionStatus)
+    ) {
       const subscription = await stripe.subscriptions.retrieve(
         account.stripeSubscriptionId
       );

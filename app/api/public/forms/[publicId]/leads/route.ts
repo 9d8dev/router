@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getPublishedForm } from "@/lib/data/forms";
+import { getPublishedForm } from "@/lib/data/public-forms";
 import {
   acceptLead,
   LeadCapacityError,
@@ -9,13 +9,21 @@ import {
   LeadValidationError,
 } from "@/lib/forms/lead-acceptance";
 import { isHostedFormRequest, requestOrigin } from "@/lib/forms/origins";
-import { isApprovedFormOrigin, publicCorsHeaders } from "@/lib/forms/public-access";
+import {
+  isApprovedFormOrigin,
+  publicCorsHeaders,
+  publicFormOptionsResponse,
+} from "@/lib/forms/public-access";
 import { enforceFormRateLimit, FormRateLimitError } from "@/lib/forms/rate-limit";
 import {
   submissionTokenMatchesRequest,
   verifySubmissionToken,
 } from "@/lib/forms/submission-token";
 import { publicFormsEnabled } from "@/lib/forms/feature-flags";
+import {
+  PayloadTooLargeError,
+  readLimitedJsonBody,
+} from "@/lib/forms/request-body";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const inputSchema = z.object({
@@ -32,16 +40,6 @@ function clientIp(request: Request): string {
   );
 }
 
-async function readBody(request: Request): Promise<unknown> {
-  const declaredLength = Number(request.headers.get("content-length") ?? 0);
-  if (declaredLength > MAX_BODY_BYTES) throw new Error("payload_too_large");
-  const text = await request.text();
-  if (Buffer.byteLength(text, "utf8") > MAX_BODY_BYTES) {
-    throw new Error("payload_too_large");
-  }
-  return JSON.parse(text);
-}
-
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ publicId: string }> }
@@ -53,9 +51,11 @@ export async function POST(
   const origin = requestOrigin(request);
   let parsed: z.infer<typeof inputSchema>;
   try {
-    parsed = inputSchema.parse(await readBody(request));
+    parsed = inputSchema.parse(
+      await readLimitedJsonBody(request, MAX_BODY_BYTES)
+    );
   } catch (error) {
-    const status = error instanceof Error && error.message === "payload_too_large" ? 413 : 400;
+    const status = error instanceof PayloadTooLargeError ? 413 : 400;
     return NextResponse.json({ error: status === 413 ? "payload_too_large" : "invalid_request" }, { status });
   }
 
@@ -162,13 +162,5 @@ export async function OPTIONS(
 ) {
   if (!publicFormsEnabled()) return new NextResponse(null, { status: 404 });
   const { publicId } = await params;
-  const origin = requestOrigin(request);
-  const approved = origin
-    ? (await isApprovedFormOrigin({ publicId, origin, placement: "embed" })) ||
-      (await isApprovedFormOrigin({ publicId, origin, placement: "wordpress" }))
-    : false;
-  return new NextResponse(null, {
-    status: approved ? 204 : 403,
-    headers: publicCorsHeaders(origin, approved),
-  });
+  return publicFormOptionsResponse(request, publicId);
 }

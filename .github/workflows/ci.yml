@@ -27,6 +27,7 @@ jobs:
           AUTH_SECRET: credential-free-build-secret-for-ci-only
           FORM_SUBMISSION_SECRET: credential-free-form-secret-for-ci-only
           FORM_RATE_LIMIT_SECRET: credential-free-rate-secret-for-ci-only
+      - run: pnpm check:server-actions
 
   postgres:
     runs-on: ubuntu-latest

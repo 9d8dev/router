@@ -1,6 +1,6 @@
 import Script from "next/script";
 import { notFound } from "next/navigation";
-import { getPublishedForm } from "@/lib/data/forms";
+import { getPublishedForm } from "@/lib/data/public-forms";
 import { publicFormsEnabled } from "@/lib/forms/feature-flags";
 
 export default async function HostedFormPage({

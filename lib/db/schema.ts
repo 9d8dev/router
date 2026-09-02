@@ -46,6 +46,9 @@ export const users = pgTable("user", {
   stripeCustomerId: text("stripeCustomerId"),
   stripeSubscriptionId: text("stripeSubscriptionId"),
   stripeSubscriptionStatus: text("stripeSubscriptionStatus"),
+  stripeSubscriptionCreatedAt: timestamp("stripeSubscriptionCreatedAt", {
+    withTimezone: true,
+  }),
   stripeCurrentPeriodEnd: timestamp("stripeCurrentPeriodEnd", {
     withTimezone: true,
   }),
@@ -299,21 +302,30 @@ export const formPlacementEnum = pgEnum("formPlacement", [
   "wordpress",
 ]);
 
-export const leads = pgTable("lead", {
-  id: text("id")
-    .$defaultFn(() => createId())
-    .notNull()
-    .primaryKey(),
-  endpointId: text("endpointId")
-    .notNull()
+export const leads = pgTable(
+  "lead",
+  {
+    id: text("id")
+      .$defaultFn(() => createId())
+      .notNull()
+      .primaryKey(),
+    endpointId: text("endpointId")
+      .notNull()
       .references(() => endpoints.id, { onDelete: "cascade" }),
-  formId: text("formId").references(() => forms.id, { onDelete: "set null" }),
-  formRevision: integer("formRevision"),
-  placement: formPlacementEnum("placement"),
-  data: jsonb("data").$type<{ [key: string]: any }>().notNull(),
-  createdAt: timestamp("createdAt", { mode: "date" }).notNull(),
-  updatedAt: timestamp("updatedAt", { mode: "date" }).notNull(),
-});
+    formId: text("formId").references(() => forms.id, { onDelete: "set null" }),
+    formRevision: integer("formRevision"),
+    placement: formPlacementEnum("placement"),
+    data: jsonb("data").$type<{ [key: string]: any }>().notNull(),
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull(),
+    updatedAt: timestamp("updatedAt", { mode: "date" }).notNull(),
+  },
+  (lead) => ({
+    formCreatedIndex: index("lead_form_created_idx").on(
+      lead.formId,
+      lead.createdAt
+    ),
+  })
+);
 
 export const formPlacementMilestones = pgTable(
   "formPlacementMilestone",

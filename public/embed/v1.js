@@ -180,9 +180,13 @@
       range.max = String(field.validation && field.validation.max !== undefined ? field.validation.max : 100);
       range.step = String(field.validation && field.validation.step !== undefined ? field.validation.step : 1);
       range.value = String(field.defaultValue !== undefined ? field.defaultValue : range.min);
+      range.dataset.routerTouched = String(field.required || field.defaultValue !== undefined);
       var rangeValue = element("output", "router-form-v1__range-value", range.value);
       rangeValue.htmlFor = id;
-      range.addEventListener("input", function () { rangeValue.textContent = range.value; });
+      range.addEventListener("input", function () {
+        range.dataset.routerTouched = "true";
+        rangeValue.textContent = range.value;
+      });
       wrapper.appendChild(range);
       wrapper.appendChild(rangeValue);
     } else {
@@ -215,8 +219,12 @@
         if (checked) values[field.key] = field.kind === "yes-no" ? checked.value === "true" : checked.value;
       } else if (field.kind === "checkbox" || field.kind === "switch") {
         values[field.key] = Boolean(controls && controls.checked);
-      } else if (field.kind === "number" || field.kind === "slider") {
+      } else if (field.kind === "number") {
         if (controls && controls.value !== "") values[field.key] = Number(controls.value);
+      } else if (field.kind === "slider") {
+        if (controls && controls.dataset.routerTouched === "true") {
+          values[field.key] = Number(controls.value);
+        }
       } else if (controls && controls.value !== "") {
         values[field.key] = controls.value;
       }
@@ -270,7 +278,7 @@
     honeypot.setAttribute("aria-hidden", "true");
     var honeypotLabel = element("label", "", "Leave this field empty");
     var honeypotInput = document.createElement("input");
-    honeypotInput.name = "website";
+    honeypotInput.name = "_router_form_website";
     honeypotInput.tabIndex = -1;
     honeypotInput.autocomplete = "off";
     honeypotLabel.appendChild(honeypotInput);
@@ -318,7 +326,12 @@
           window.location.assign(result.completion.url);
           return;
         }
-        root.replaceChildren(element("p", "router-form-v1__status", result.completion && result.completion.message ? result.completion.message : "Thanks — your response has been received."));
+        var completion = element("p", "router-form-v1__status", result.completion && result.completion.message ? result.completion.message : "Thanks — your response has been received.");
+        completion.setAttribute("role", "status");
+        completion.setAttribute("aria-live", "polite");
+        completion.tabIndex = -1;
+        root.replaceChildren(completion);
+        completion.focus();
       } catch (error) {
         var status = element("p", "router-form-v1__status", error && error.message ? error.message : "Router is unavailable. Please try again.");
         status.setAttribute("role", "alert");

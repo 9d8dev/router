@@ -10,6 +10,7 @@
     "dev": "next dev",
     "docker-dev": "tsx lib/db/migrate.ts &&next dev",
     "build": "next build",
+    "check:server-actions": "node scripts/check-server-action-boundaries.mjs",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

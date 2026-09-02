@@ -8,6 +8,7 @@ import {
   stripeCheckoutMetadata,
   subscriptionEntitlementState,
 } from "../lib/forms/stripe-subscription-state";
+import { legacyMigrationDecision } from "../lib/forms/stripe-legacy-migration";
 
 const originalEnv = { ...process.env };
 
@@ -21,12 +22,25 @@ function subscription(priceId: string, cancelAtPeriodEnd = false) {
     customerId: "cus_router",
     subscriptionId: "sub_router",
     status: "active",
+    createdAt: 1_700_000_000,
     currentPeriodEnd: 1_800_000_000,
     cancelAtPeriodEnd,
   };
 }
 
 describe("Stripe entitlement transitions", () => {
+  it("reconciles already-scheduled legacy subscriptions only in apply mode", () => {
+    expect(
+      legacyMigrationDecision({ apply: true, cancelAtPeriodEnd: true })
+    ).toEqual({ updateStripe: false, reconcileRouter: true });
+    expect(
+      legacyMigrationDecision({ apply: false, cancelAtPeriodEnd: true })
+    ).toEqual({ updateStripe: false, reconcileRouter: false });
+    expect(
+      legacyMigrationDecision({ apply: true, cancelAtPeriodEnd: false })
+    ).toEqual({ updateStripe: true, reconcileRouter: true });
+  });
+
   it("recognizes a new checkout or resubscription price", () => {
     process.env.STRIPE_PRO_MONTHLY_PRICE_ID = "price_new_pro";
     expect(subscriptionEntitlementState(subscription("price_new_pro"))).toMatchObject({
@@ -49,10 +63,13 @@ describe("Stripe entitlement transitions", () => {
   });
 
   it("downgrades to Free when a subscription ends", () => {
-    expect(endedSubscriptionState("canceled")).toEqual({
+    expect(
+      endedSubscriptionState("canceled", "sub_router", 1_700_000_000)
+    ).toEqual({
       plan: "free",
-      stripeSubscriptionId: null,
+      stripeSubscriptionId: "sub_router",
       stripeSubscriptionStatus: "canceled",
+      stripeSubscriptionCreatedAt: new Date(1_700_000_000 * 1_000),
       stripeCurrentPeriodEnd: null,
       stripeCancelAtPeriodEnd: false,
       legacyPriceMigrationRequired: false,
@@ -70,9 +87,70 @@ describe("Stripe entitlement transitions", () => {
   });
 
   it("ignores events from a superseded subscription", () => {
-    expect(shouldApplySubscriptionEvent(null, "sub_legacy")).toBe(true);
-    expect(shouldApplySubscriptionEvent("sub_current", "sub_current")).toBe(true);
-    expect(shouldApplySubscriptionEvent("sub_current", "sub_legacy")).toBe(false);
+    const event = {
+      eventSubscriptionId: "sub_current",
+      eventCreatedAt: new Date("2026-09-02T12:00:00Z"),
+    };
+    expect(
+      shouldApplySubscriptionEvent({
+        storedSubscriptionId: null,
+        storedSubscriptionStatus: null,
+        storedSubscriptionCreatedAt: null,
+        ...event,
+      })
+    ).toBe(true);
+    expect(
+      shouldApplySubscriptionEvent({
+        storedSubscriptionId: "sub_current",
+        storedSubscriptionStatus: "active",
+        storedSubscriptionCreatedAt: new Date("2026-09-02T12:00:00Z"),
+        ...event,
+      })
+    ).toBe(true);
+    expect(
+      shouldApplySubscriptionEvent({
+        storedSubscriptionId: "sub_current",
+        storedSubscriptionStatus: "canceled",
+        storedSubscriptionCreatedAt: new Date("2026-09-02T12:00:00Z"),
+        ...event,
+      })
+    ).toBe(false);
+    expect(
+      shouldApplySubscriptionEvent({
+        storedSubscriptionId: "sub_current",
+        storedSubscriptionStatus: "active",
+        storedSubscriptionCreatedAt: new Date("2026-09-02T12:00:00Z"),
+        eventSubscriptionId: "sub_other",
+        eventCreatedAt: new Date("2026-09-03T12:00:00Z"),
+      })
+    ).toBe(false);
+    expect(
+      shouldApplySubscriptionEvent({
+        storedSubscriptionId: "sub_current",
+        storedSubscriptionStatus: "canceled",
+        storedSubscriptionCreatedAt: null,
+        eventSubscriptionId: "sub_unknown_age",
+        eventCreatedAt: new Date("2026-09-03T12:00:00Z"),
+      })
+    ).toBe(false);
+    expect(
+      shouldApplySubscriptionEvent({
+        storedSubscriptionId: "sub_current",
+        storedSubscriptionStatus: "canceled",
+        storedSubscriptionCreatedAt: new Date("2026-09-02T12:00:00Z"),
+        eventSubscriptionId: "sub_older",
+        eventCreatedAt: new Date("2026-09-01T12:00:00Z"),
+      })
+    ).toBe(false);
+    expect(
+      shouldApplySubscriptionEvent({
+        storedSubscriptionId: "sub_current",
+        storedSubscriptionStatus: "canceled",
+        storedSubscriptionCreatedAt: new Date("2026-09-02T12:00:00Z"),
+        eventSubscriptionId: "sub_new",
+        eventCreatedAt: new Date("2026-09-03T12:00:00Z"),
+      })
+    ).toBe(true);
   });
 
   it("clears period-end cancellation only after selecting a new Router price", () => {

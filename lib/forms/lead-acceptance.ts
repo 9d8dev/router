@@ -81,6 +81,27 @@ type AcceptanceResult = {
   capacity: CapacityState;
 };
 
+async function recordWebhookLog(
+  input: {
+    endpointId: string;
+    type: "success" | "error";
+    message: Record<string, unknown>;
+  },
+  database: typeof db
+): Promise<void> {
+  try {
+    await database.insert(logs).values({
+      endpointId: input.endpointId,
+      type: input.type,
+      postType: "webhook",
+      message: input.message,
+      createdAt: new Date(),
+    });
+  } catch (error) {
+    console.error("Could not record webhook delivery:", error);
+  }
+}
+
 function utcPeriodStart(now: Date): string {
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-01`;
 }
@@ -99,32 +120,26 @@ async function deliverWebhook(input: {
     });
     if (!response.ok) {
       const message = (await response.text()).slice(0, 2_000) || `HTTP ${response.status}`;
-      await database.insert(logs).values({
+      await recordWebhookLog({
         endpointId: input.endpointId,
         type: "error",
-        postType: "webhook",
         message: { error: message },
-        createdAt: new Date(),
-      });
+      }, database);
       return;
     }
-    await database.insert(logs).values({
+    await recordWebhookLog({
       endpointId: input.endpointId,
       type: "success",
-      postType: "webhook",
       message: { success: true, url: input.url },
-      createdAt: new Date(),
-    });
+    }, database);
   } catch (error) {
-    await database.insert(logs).values({
+    await recordWebhookLog({
       endpointId: input.endpointId,
       type: "error",
-      postType: "webhook",
       message: {
         error: error instanceof Error ? error.message.slice(0, 2_000) : "Webhook failed.",
       },
-      createdAt: new Date(),
-    });
+    }, database);
   }
 }
 
@@ -346,7 +361,13 @@ export async function acceptLead(
     };
     });
 
-    if (accepted.webhook) await deliverWebhook(accepted.webhook, database);
+    if (accepted.webhook) {
+      try {
+        await deliverWebhook(accepted.webhook, database);
+      } catch (error) {
+        console.error("Could not deliver webhook after accepting lead:", error);
+      }
+    }
     if (accepted.formId && accepted.firstPlacement) {
       await captureServerEvent({
         event: "form_first_lead_by_placement",
