@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { FormDefinitionV1 } from "../lib/forms/definition";
@@ -39,6 +39,7 @@ describe("embed v1 runtime", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     document.body.innerHTML = "";
   });
 
@@ -76,6 +77,57 @@ describe("embed v1 runtime", () => {
     expect(first.querySelector("form")).not.toBeNull();
     expect(second.querySelector("form")).not.toBeNull();
     expect(document.querySelectorAll("#router-forms-v1-styles")).toHaveLength(1);
+  });
+
+  it("refreshes a cached definition that does not match the render session", async () => {
+    const target = document.createElement("div");
+    const currentDefinition = { ...definition, title: "Current revision" };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            publicId: "stale-form",
+            revision: 1,
+            definition: { ...definition, title: "Cached revision" },
+            attribution: { visible: false },
+          }),
+          { status: 200 }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            submitToken: "revision-two-token",
+            revision: 2,
+            expiresIn: 3600,
+          }),
+          { status: 200 }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            publicId: "stale-form",
+            revision: 2,
+            definition: currentDefinition,
+            attribution: { visible: false },
+          }),
+          { status: 200 }
+        )
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    target.setAttribute("data-router-form", "stale-form");
+    const runtime = (window as unknown as {
+      RouterFormsV1: { mount: (target: Element) => Promise<void> };
+    }).RouterFormsV1;
+
+    await runtime.mount(target);
+
+    expect(target.querySelector("h2")?.textContent).toBe("Current revision");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2][0]).toContain("?revision=2");
+    expect(fetchMock.mock.calls[2][1]).toMatchObject({ cache: "no-store" });
   });
 
   it("installs runtime styles in an iframe preview document", async () => {
@@ -134,6 +186,48 @@ describe("embed v1 runtime", () => {
     checkboxes[1].click();
     expect(form.checkValidity()).toBe(true);
   });
+
+  it.each(["radio", "checkbox-group"] as const)(
+    "does not select an %s option when its value is the string undefined",
+    async (kind) => {
+      const target = document.createElement("div");
+      document.body.appendChild(target);
+      const runtime = (window as unknown as {
+        RouterFormsV1: {
+          mount: (target: Element, options: object) => Promise<void>;
+        };
+      }).RouterFormsV1;
+      const choiceDefinition: FormDefinitionV1 = {
+        ...definition,
+        fields: [
+          {
+            id: "choice",
+            key: "choice",
+            kind,
+            label: "Choice",
+            required: true,
+            options: [
+              {
+                id: "undefined_option",
+                label: "No default",
+                value: "undefined",
+              },
+            ],
+          },
+        ],
+      };
+
+      await runtime.mount(target, {
+        definition: choiceDefinition,
+        publicId: `undefined-${kind}`,
+        preview: true,
+      });
+
+      const input = target.querySelector<HTMLInputElement>("input")!;
+      expect(input.checked).toBe(false);
+      expect(target.querySelector("form")!.checkValidity()).toBe(false);
+    }
+  );
 
   it("uses unique control IDs when the same form is mounted twice", async () => {
     const first = document.createElement("div");

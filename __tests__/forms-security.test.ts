@@ -36,6 +36,7 @@ describe("signed form submission tokens", () => {
     const token = createSubmissionToken(
       {
         publicId: "form_public_1",
+        revision: 7,
         placement: "embed",
         origin: "https://example.com",
       },
@@ -44,6 +45,7 @@ describe("signed form submission tokens", () => {
 
     expect(verifySubmissionToken(token, { secret, now })).toMatchObject({
       publicId: "form_public_1",
+      revision: 7,
       placement: "embed",
       origin: "https://example.com",
       expiresAt: "2026-09-01T19:00:00.000Z",
@@ -55,6 +57,7 @@ describe("signed form submission tokens", () => {
     const token = createSubmissionToken(
       {
         publicId: "form_public_1",
+        revision: 7,
         placement: "hosted",
         origin: "https://forms.router.so",
       },
@@ -80,6 +83,7 @@ describe("signed form submission tokens", () => {
       createSubmissionToken(
         {
           publicId: "form_public_1",
+          revision: 7,
           placement: "hosted",
           origin: "https://forms.router.so",
         },
@@ -91,18 +95,21 @@ describe("signed form submission tokens", () => {
     expect(
       submissionTokenMatchesRequest(token, {
         publicId: "form_public_1",
+        revision: 7,
         origin: "https://forms.router.so",
       })
     ).toBe(true);
     expect(
       submissionTokenMatchesRequest(token, {
         publicId: "form_public_1",
+        revision: 7,
         origin: "https://attacker.example",
       })
     ).toBe(false);
     expect(
       submissionTokenMatchesRequest(token, {
         publicId: "form_public_1",
+        revision: 7,
         origin: null,
       })
     ).toBe(false);
@@ -113,6 +120,7 @@ describe("signed form submission tokens", () => {
     const token = createSubmissionToken(
       {
         publicId: "form_public_1",
+        revision: 7,
         placement: "hosted",
         origin: "https://forms.router.so",
       },
@@ -132,6 +140,38 @@ describe("signed form submission tokens", () => {
 
     expect(() =>
       verifySubmissionToken(`${originlessPayload}.${originlessSignature}`, {
+        secret,
+        now,
+      })
+    ).toThrow("Invalid submission token");
+  });
+
+  it("rejects legacy signed tokens without a published revision claim", () => {
+    const now = new Date("2026-09-01T18:00:00.000Z");
+    const token = createSubmissionToken(
+      {
+        publicId: "form_public_1",
+        revision: 7,
+        placement: "hosted",
+        origin: "https://forms.router.so",
+      },
+      { secret, now }
+    );
+    const [encodedPayload] = token.split(".");
+    const payload = JSON.parse(
+      Buffer.from(encodedPayload, "base64url").toString("utf8")
+    );
+    delete payload.revision;
+    const revisionlessPayload = Buffer.from(
+      JSON.stringify(payload),
+      "utf8"
+    ).toString("base64url");
+    const revisionlessSignature = createHmac("sha256", secret)
+      .update(revisionlessPayload)
+      .digest("base64url");
+
+    expect(() =>
+      verifySubmissionToken(`${revisionlessPayload}.${revisionlessSignature}`, {
         secret,
         now,
       })

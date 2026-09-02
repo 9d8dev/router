@@ -41,6 +41,16 @@ $pages = array(
     "router-forms-block" => array("Router Forms Block", "<!-- wp:router/forms {\"formId\":\"browser-form\"} /-->"),
     "router-forms-multiple" => array("Router Forms Multiple", "[router_form id=\"browser-form\"]<!-- wp:router/forms {\"formId\":\"browser-form\"} /-->"),
 );
+$starter_ids = array("blank", "contact", "lead-capture", "feedback", "newsletter");
+$starter_shortcodes = "";
+$starter_blocks = "";
+foreach ($starter_ids as $starter_id) {
+    $public_id = "starter-" . $starter_id;
+    $starter_shortcodes .= "[router_form id=\"" . $public_id . "\"]";
+    $starter_blocks .= "<!-- wp:router/forms {\"formId\":\"" . $public_id . "\"} /-->";
+}
+$pages["router-forms-shortcode-starters"] = array("Router Forms Shortcode Starters", $starter_shortcodes);
+$pages["router-forms-block-starters"] = array("Router Forms Block Starters", $starter_blocks);
 foreach ($pages as $slug => $page) {
     $existing = get_page_by_path($slug, OBJECT, "page");
     $result = wp_insert_post(array(

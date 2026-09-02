@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import type { FormDefinitionV1 } from "../lib/forms/definition";
+import { FORM_STARTERS } from "../lib/forms/starters";
 
 const wordpressBaseUrl = process.env.WORDPRESS_BASE_URL;
 const runtimeSource = readFileSync("public/embed/v1.js", "utf8");
@@ -8,14 +9,49 @@ const publicId = "browser-form";
 const definition: FormDefinitionV1 = {
   version: 1,
   title: "Browser matrix form",
-  description: "Rendered by the real WordPress integration.",
+  description: "Every supported field type rendered by WordPress.",
   fields: [
+    { id: "name", key: "name", kind: "text", label: "Name", required: true },
+    { id: "email", key: "email", kind: "email", label: "Email", required: true },
+    { id: "phone", key: "phone", kind: "phone", label: "Phone", required: true },
+    { id: "url", key: "url", kind: "url", label: "Website", required: true },
+    { id: "date", key: "date", kind: "date", label: "Date", required: true },
+    { id: "count", key: "count", kind: "number", label: "Count", required: true },
+    { id: "notes", key: "notes", kind: "textarea", label: "Notes", required: true },
     {
-      id: "fld_name",
-      key: "name",
-      kind: "text",
-      label: "Name",
+      id: "select",
+      key: "select",
+      kind: "select",
+      label: "Select topic",
       required: true,
+      options: [{ id: "sales", label: "Sales", value: "sales" }],
+    },
+    {
+      id: "radio",
+      key: "radio",
+      kind: "radio",
+      label: "Radio topic",
+      required: true,
+      options: [{ id: "alpha", label: "Alpha", value: "alpha" }],
+    },
+    { id: "consent", key: "consent", kind: "checkbox", label: "Consent", required: true },
+    {
+      id: "groups",
+      key: "groups",
+      kind: "checkbox-group",
+      label: "Groups",
+      required: true,
+      options: [{ id: "one", label: "Group one", value: "one" }],
+    },
+    { id: "decision", key: "decision", kind: "yes-no", label: "Decision", required: true },
+    { id: "updates", key: "updates", kind: "switch", label: "Updates", required: false },
+    {
+      id: "score",
+      key: "score",
+      kind: "slider",
+      label: "Score",
+      required: true,
+      validation: { min: 0, max: 10, step: 1 },
     },
   ],
   submitLabel: "Send response",
@@ -54,6 +90,15 @@ async function installRouterMocks(page: Page) {
     }
 
     const headers = { "access-control-allow-origin": "*" };
+    const requestUrl = new URL(route.request().url());
+    const pathParts = requestUrl.pathname.split("/").filter(Boolean);
+    const requestedPublicId = pathParts[pathParts.indexOf("forms") + 1];
+    const starterId = requestedPublicId.startsWith("starter-")
+      ? requestedPublicId.slice("starter-".length)
+      : null;
+    const requestedDefinition = starterId && starterId in FORM_STARTERS
+      ? FORM_STARTERS[starterId as keyof typeof FORM_STARTERS]
+      : definition;
     if (route.request().url().endsWith("/render-session")) {
       placements.push(
         (route.request().postDataJSON() as { placement: string }).placement
@@ -61,7 +106,11 @@ async function installRouterMocks(page: Page) {
       await route.fulfill({
         contentType: "application/json",
         headers,
-        body: JSON.stringify({ submitToken: "wordpress-token", expiresIn: 3600 }),
+        body: JSON.stringify({
+          submitToken: "wordpress-token",
+          revision: 1,
+          expiresIn: 3600,
+        }),
       });
       return;
     }
@@ -71,7 +120,7 @@ async function installRouterMocks(page: Page) {
         headers,
         body: JSON.stringify({
           leadId: "lead-wordpress",
-          completion: definition.completion,
+          completion: requestedDefinition.completion,
         }),
       });
       return;
@@ -80,14 +129,33 @@ async function installRouterMocks(page: Page) {
       contentType: "application/json",
       headers,
       body: JSON.stringify({
-        publicId,
+        publicId: requestedPublicId,
         revision: 1,
-        definition,
+        definition: requestedDefinition,
         attribution: { visible: false },
       }),
     });
   });
   return placements;
+}
+
+async function completeEveryField(page: Page) {
+  const mount = page.locator(`[data-router-form="${publicId}"]`);
+  await mount.getByLabel("Name").fill("Ada Lovelace");
+  await mount.getByLabel("Email").fill("ada@example.com");
+  await mount.getByLabel("Phone").fill("+12025550123");
+  await mount.getByLabel("Website").fill("https://example.com");
+  await mount.getByLabel(/^Date/).fill("2026-09-01");
+  await mount.getByLabel("Count").fill("4");
+  await mount.getByLabel("Notes").fill("A WordPress browser response.");
+  await mount.getByLabel("Select topic").selectOption("sales");
+  await mount.getByRole("radio", { name: "Alpha" }).check();
+  await mount.getByRole("checkbox", { name: /Consent/ }).check();
+  await mount.getByRole("checkbox", { name: "Group one" }).check();
+  await mount.getByRole("radio", { name: "Yes" }).check();
+  await mount.getByRole("checkbox", { name: "Updates" }).check();
+  await mount.getByLabel("Score").fill("7");
+  await mount.getByRole("button", { name: definition.submitLabel }).click();
 }
 
 async function login(page: Page) {
@@ -229,8 +297,7 @@ test.describe("Router Forms in WordPress", () => {
       expect(themeInheritance.rootFont).toBe(themeInheritance.bodyFont);
       expect(themeInheritance.rootColor).toBe(themeInheritance.bodyColor);
 
-      await page.getByLabel("Name").fill("Ada Lovelace");
-      await page.getByRole("button", { name: definition.submitLabel }).click();
+      await completeEveryField(page);
       await expect(page.getByText("WordPress submission accepted.")).toBeVisible();
       expect(await page.content()).not.toContain("secret-test-token");
     });
@@ -244,4 +311,21 @@ test.describe("Router Forms in WordPress", () => {
       2
     );
   });
+
+  for (const placement of ["shortcode", "block"] as const) {
+    test(`${placement} renders every code-defined starter`, async ({ page }) => {
+      await installRouterMocks(page);
+      await page.goto(`${wordpressBaseUrl}/router-forms-${placement}-starters/`);
+
+      for (const [starterId, starter] of Object.entries(FORM_STARTERS)) {
+        const mount = page.locator(`[data-router-form="starter-${starterId}"]`);
+        await expect(
+          mount.getByRole("heading", { name: starter.title })
+        ).toBeVisible();
+        await expect(
+          mount.getByRole("button", { name: starter.submitLabel })
+        ).toBeVisible();
+      }
+    });
+  }
 });

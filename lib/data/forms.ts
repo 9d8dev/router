@@ -1,7 +1,7 @@
 "use server";
 
 import { randomBytes } from "node:crypto";
-import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { revalidatePath, unstable_cache } from "next/cache";
 import { z } from "zod";
@@ -33,6 +33,17 @@ import {
 import { getEntitlement, type RouterPlan } from "@/lib/forms/entitlements";
 import { normalizeOrigin } from "@/lib/forms/origins";
 import { captureServerEvent } from "@/lib/analytics/server";
+import {
+  FormDraftConflictError,
+  FormPublicationConflictError,
+  FormPublicationNotFoundError,
+  publishFormForUser,
+  saveFormDraftForUser,
+} from "@/lib/forms/publication";
+import {
+  deleteFormForUser,
+  FormLifecycleNotFoundError,
+} from "@/lib/forms/lifecycle";
 
 const starterIdSchema = z.enum([
   "blank",
@@ -212,88 +223,40 @@ export const createForm = authenticatedAction
 export const saveFormDraft = authenticatedAction
   .schema(saveFormDraftInputSchema)
   .action(async ({ parsedInput, ctx: { userId } }) => {
-    const definition = formDraftDefinitionV1Schema.parse(
-      parsedInput.definition
-    ) as FormDefinitionV1;
-    const [updated] = await db
-      .update(forms)
-      .set({
-        name: parsedInput.name,
-        draftDefinition: definition,
-        draftRevision: sql`${forms.draftRevision} + 1`,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(forms.id, parsedInput.id),
-          eq(forms.userId, userId),
-          eq(forms.draftRevision, parsedInput.expectedRevision)
-        )
-      )
-      .returning({ revision: forms.draftRevision, updatedAt: forms.updatedAt });
-
-    if (!updated) {
-      throw new ActionError(
-        "This form changed in another tab. Reload before continuing so you do not overwrite newer work."
-      );
+    try {
+      const updated = await saveFormDraftForUser({
+        ...parsedInput,
+        userId,
+      });
+      revalidatePath(`/forms/${parsedInput.id}`);
+      revalidatePath("/forms");
+      return updated;
+    } catch (error) {
+      if (error instanceof FormDraftConflictError) {
+        throw new ActionError(error.message);
+      }
+      throw error;
     }
-    revalidatePath(`/forms/${parsedInput.id}`);
-    revalidatePath("/forms");
-    return updated;
   });
 
 export const publishForm = authenticatedAction
   .schema(z.object({ id: z.string(), expectedDraftRevision: z.number().int().positive() }))
   .action(async ({ parsedInput, ctx: { userId } }) => {
-    const published = await db.transaction(async (tx) => {
-      const [form] = await tx
-        .select()
-        .from(forms)
-        .where(and(eq(forms.id, parsedInput.id), eq(forms.userId, userId)))
-        .limit(1);
-      if (!form) throw new ActionError("Form not found.");
-      if (form.draftRevision !== parsedInput.expectedDraftRevision) {
-        throw new ActionError("Save the latest draft before publishing.");
+    let published;
+    try {
+      published = await publishFormForUser({
+        ...parsedInput,
+        userId,
+      });
+    } catch (error) {
+      if (
+        error instanceof FormPublicationConflictError ||
+        error instanceof FormPublicationNotFoundError
+      ) {
+        throw new ActionError(error.message);
       }
-
-      z.string().trim().min(1).max(120).parse(form.name);
-      const definition = formDefinitionV1Schema.parse(form.draftDefinition);
-      const compiledSchema = compileEndpointSchema(definition);
-      const now = new Date();
-
-      await tx
-        .update(endpoints)
-        .set({ schema: compiledSchema, updatedAt: now })
-        .where(and(eq(endpoints.id, form.endpointId), eq(endpoints.userId, userId)));
-
-      const [updated] = await tx
-        .update(forms)
-        .set({
-          publishedDefinition: definition,
-          publishedRevision: sql`${forms.publishedRevision} + 1`,
-          publishedAt: now,
-          unpublishedAt: null,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(forms.id, form.id),
-            eq(forms.userId, userId),
-            eq(forms.draftRevision, parsedInput.expectedDraftRevision),
-            eq(forms.publishedRevision, form.publishedRevision)
-          )
-        )
-        .returning({
-          publicId: forms.publicId,
-          publishedRevision: forms.publishedRevision,
-        });
-      if (!updated) {
-        throw new ActionError(
-          "This form changed while it was publishing. Reload and publish the latest draft."
-        );
-      }
-      return updated;
-    });
+      throw error;
+    }
 
     invalidatePublishedForm(published.publicId);
     await captureServerEvent({
@@ -326,11 +289,15 @@ export const unpublishForm = authenticatedAction
 export const deleteForm = authenticatedAction
   .schema(z.object({ id: z.string() }))
   .action(async ({ parsedInput: { id }, ctx: { userId } }) => {
-    const [deleted] = await db
-      .delete(forms)
-      .where(and(eq(forms.id, id), eq(forms.userId, userId)))
-      .returning({ publicId: forms.publicId });
-    if (!deleted) throw new ActionError("Form not found.");
+    let deleted;
+    try {
+      deleted = await deleteFormForUser({ id, userId });
+    } catch (error) {
+      if (error instanceof FormLifecycleNotFoundError) {
+        throw new ActionError(error.message);
+      }
+      throw error;
+    }
     invalidatePublishedForm(deleted.publicId);
     revalidatePath("/forms");
     revalidatePath("/endpoints");

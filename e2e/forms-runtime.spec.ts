@@ -62,10 +62,15 @@ async function installRuntimeMocks(
   input: {
     siteUrl: string;
     responseStatus?: number;
+    responseBody?: Record<string, unknown>;
     definition?: FormDefinitionV1;
+    definitionStatus?: number;
+    sessionRevision?: number;
+    staleDefinition?: FormDefinitionV1;
   }
 ) {
   const definition = input.definition ?? allFieldsDefinition;
+  const sessionRevision = input.sessionRevision ?? 1;
   let submitted: Record<string, unknown> | null = null;
   let requestedPlacement: string | null = null;
   await page.route("https://forms.router.so/embed/v1.js", (route) =>
@@ -89,7 +94,11 @@ async function installRuntimeMocks(
       await route.fulfill({
         contentType: "application/json",
         headers,
-        body: JSON.stringify({ submitToken: "browser-token", expiresIn: 3600 }),
+        body: JSON.stringify({
+          submitToken: "browser-token",
+          revision: sessionRevision,
+          expiresIn: 3600,
+        }),
       });
       return;
     }
@@ -101,20 +110,25 @@ async function installRuntimeMocks(
         contentType: "application/json",
         headers,
         body: JSON.stringify(
-          status === 429
+          input.responseBody ?? (status === 429
             ? { error: "monthly_capacity_reached" }
-            : { leadId: "lead-browser", completion: definition.completion }
+            : { leadId: "lead-browser", completion: definition.completion })
         ),
       });
       return;
     }
+    const requestedDefinition =
+      input.staleDefinition && new URL(route.request().url()).searchParams.has("revision")
+        ? definition
+        : input.staleDefinition ?? definition;
     await route.fulfill({
+      status: input.definitionStatus ?? 200,
       contentType: "application/json",
       headers,
       body: JSON.stringify({
         publicId,
-        revision: 1,
-        definition,
+        revision: requestedDefinition === definition ? sessionRevision : 1,
+        definition: requestedDefinition,
         attribution: { visible: false },
       }),
     });
@@ -193,20 +207,22 @@ for (const scenario of placements) {
   });
 }
 
-for (const [starterId, starterDefinition] of Object.entries(FORM_STARTERS)) {
-  test(`${starterId} starter renders through the production runtime`, async ({ page }) => {
-    const siteUrl = `https://forms.router.so/starters/${starterId}`;
-    await installRuntimeMocks(page, { siteUrl, definition: starterDefinition });
-    await openPlacement(page, {
-      siteUrl,
-      placement: "hosted",
-      definition: starterDefinition,
-    });
+for (const scenario of placements) {
+  for (const [starterId, starterDefinition] of Object.entries(FORM_STARTERS)) {
+    test(`${starterId} starter renders in ${scenario.name}`, async ({ page }) => {
+      const siteUrl = `${scenario.siteUrl}/starters/${starterId}`;
+      await installRuntimeMocks(page, { siteUrl, definition: starterDefinition });
+      await openPlacement(page, {
+        siteUrl,
+        placement: scenario.placement,
+        definition: starterDefinition,
+      });
 
-    await expect(
-      page.getByRole("button", { name: starterDefinition.submitLabel })
-    ).toBeVisible();
-  });
+      await expect(
+        page.getByRole("button", { name: starterDefinition.submitLabel })
+      ).toBeVisible();
+    });
+  }
 }
 
 test("shows quota-paused and Router-unavailable states", async ({ page }) => {
@@ -236,4 +252,161 @@ test("shows quota-paused and Router-unavailable states", async ({ page }) => {
   );
   await unavailable.goto("https://site.example/unavailable");
   await expect(unavailable.getByText("This form is unavailable.")).toBeVisible();
+});
+
+test("shows server field errors accessibly and focuses the invalid control", async ({
+  page,
+}) => {
+  await installRuntimeMocks(page, {
+    siteUrl: "https://site.example/validation",
+    responseStatus: 400,
+    responseBody: {
+      error: "validation_failed",
+      fields: { email: ["This email is already registered."] },
+    },
+  });
+  await openPlacement(page, {
+    siteUrl: "https://site.example/validation",
+    placement: "embed",
+  });
+  await completeEveryField(page);
+
+  const email = page.getByLabel("Email");
+  await expect(page.getByRole("alert")).toHaveText(
+    "This email is already registered."
+  );
+  await expect(email).toBeFocused();
+  await expect(email).toHaveAttribute("aria-invalid", "true");
+});
+
+test("follows a validated completion redirect", async ({ page }) => {
+  const redirectDefinition: FormDefinitionV1 = {
+    ...allFieldsDefinition,
+    completion: { type: "redirect", url: "https://site.example/thanks" },
+  };
+  await page.route("https://site.example/thanks", (route) =>
+    route.fulfill({ contentType: "text/html", body: "Redirect complete" })
+  );
+  await installRuntimeMocks(page, {
+    siteUrl: "https://site.example/redirect",
+    definition: redirectDefinition,
+  });
+  await openPlacement(page, {
+    siteUrl: "https://site.example/redirect",
+    placement: "embed",
+    definition: redirectDefinition,
+  });
+  await completeEveryField(page);
+
+  await expect(page).toHaveURL("https://site.example/thanks");
+  await expect(page.getByText("Redirect complete")).toBeVisible();
+});
+
+test("refreshes a stale cached definition before rendering", async ({ page }) => {
+  const currentDefinition: FormDefinitionV1 = {
+    ...allFieldsDefinition,
+    title: "Current form revision",
+  };
+  await installRuntimeMocks(page, {
+    siteUrl: "https://site.example/stale",
+    definition: currentDefinition,
+    staleDefinition: { ...allFieldsDefinition, title: "Stale cached revision" },
+    sessionRevision: 2,
+  });
+  await openPlacement(page, {
+    siteUrl: "https://site.example/stale",
+    placement: "embed",
+    definition: currentDefinition,
+  });
+
+  await expect(page.getByText("Stale cached revision")).toHaveCount(0);
+});
+
+test("shows an unavailable state for a disabled or unpublished form", async ({
+  page,
+}) => {
+  const siteUrl = "https://site.example/disabled";
+  await installRuntimeMocks(page, { siteUrl, definitionStatus: 404 });
+  await page.route(siteUrl, (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: `<div data-router-form="${publicId}"></div><script src="https://forms.router.so/embed/v1.js"></script>`,
+    })
+  );
+  await page.goto(siteUrl);
+
+  await expect(page.getByText("This form is unavailable.")).toBeVisible();
+});
+
+test("exposes a loading state until the definition and render session arrive", async ({
+  page,
+}) => {
+  let releaseResponses!: () => void;
+  const responseGate = new Promise<void>((resolve) => {
+    releaseResponses = resolve;
+  });
+  await page.route("https://forms.router.so/embed/v1.js", (route) =>
+    route.fulfill({ contentType: "application/javascript", body: runtimeSource })
+  );
+  await page.route("https://forms.router.so/api/public/forms/**", async (route) => {
+    await responseGate;
+    if (route.request().url().endsWith("/render-session")) {
+      await route.fulfill({
+        contentType: "application/json",
+        headers: { "access-control-allow-origin": "*" },
+        body: JSON.stringify({
+          submitToken: "loading-token",
+          revision: 1,
+          expiresIn: 3600,
+        }),
+      });
+      return;
+    }
+    await route.fulfill({
+      contentType: "application/json",
+      headers: { "access-control-allow-origin": "*" },
+      body: JSON.stringify({
+        publicId,
+        revision: 1,
+        definition: allFieldsDefinition,
+        attribution: { visible: false },
+      }),
+    });
+  });
+  const siteUrl = "https://site.example/loading";
+  await page.route(siteUrl, (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: `<div data-router-form="${publicId}"></div><script src="https://forms.router.so/embed/v1.js"></script>`,
+    })
+  );
+
+  await page.goto(siteUrl);
+  const mount = page.locator(`[data-router-form="${publicId}"]`);
+  await expect(mount).toHaveAttribute("aria-busy", "true");
+  releaseResponses();
+  await expect(
+    mount.getByRole("heading", { name: allFieldsDefinition.title })
+  ).toBeVisible();
+  await expect(mount).not.toHaveAttribute("aria-busy", "true");
+});
+
+test("preserves the entered form and reports a revision race", async ({ page }) => {
+  await installRuntimeMocks(page, {
+    siteUrl: "https://site.example/revision-race",
+    responseStatus: 409,
+    responseBody: { error: "stale_form_revision", revision: 2 },
+  });
+  await openPlacement(page, {
+    siteUrl: "https://site.example/revision-race",
+    placement: "embed",
+  });
+  await completeEveryField(page);
+
+  await expect(
+    page.getByRole("alert").filter({
+      hasText: "This form changed while you were filling it out.",
+    })
+  ).toBeVisible();
+  await expect(page.getByLabel("Name")).toHaveValue("Ada Lovelace");
 });

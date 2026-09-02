@@ -51,6 +51,13 @@ export class LeadEndpointError extends Error {
   }
 }
 
+export class LeadStaleRevisionError extends Error {
+  constructor(readonly currentRevision: number) {
+    super("The published form changed after this render session was created.");
+    this.name = "LeadStaleRevisionError";
+  }
+}
+
 type HeadlessAcceptanceInput = {
   endpointId: string;
   values: unknown;
@@ -59,6 +66,7 @@ type HeadlessAcceptanceInput = {
 
 type PublicFormAcceptanceInput = {
   publicId: string;
+  publishedRevision: number;
   values: unknown;
   placement: FormPlacement;
 };
@@ -81,7 +89,7 @@ async function deliverWebhook(input: {
   endpointId: string;
   url: string;
   values: Record<string, unknown>;
-}): Promise<void> {
+}, database: typeof db): Promise<void> {
   try {
     const response = await fetch(input.url, {
       method: "POST",
@@ -91,7 +99,7 @@ async function deliverWebhook(input: {
     });
     if (!response.ok) {
       const message = (await response.text()).slice(0, 2_000) || `HTTP ${response.status}`;
-      await db.insert(logs).values({
+      await database.insert(logs).values({
         endpointId: input.endpointId,
         type: "error",
         postType: "webhook",
@@ -100,7 +108,7 @@ async function deliverWebhook(input: {
       });
       return;
     }
-    await db.insert(logs).values({
+    await database.insert(logs).values({
       endpointId: input.endpointId,
       type: "success",
       postType: "webhook",
@@ -108,7 +116,7 @@ async function deliverWebhook(input: {
       createdAt: new Date(),
     });
   } catch (error) {
-    await db.insert(logs).values({
+    await database.insert(logs).values({
       endpointId: input.endpointId,
       type: "error",
       postType: "webhook",
@@ -123,14 +131,15 @@ async function deliverWebhook(input: {
 async function logRejectedLead(
   input: AcceptLeadInput,
   error: unknown,
-  now: Date
+  now: Date,
+  database: typeof db
 ): Promise<void> {
   try {
     let endpointId: string | undefined;
     if ("endpointId" in input) {
       endpointId = input.endpointId;
     } else {
-      const [row] = await db
+      const [row] = await database
         .select({ endpointId: forms.endpointId })
         .from(forms)
         .where(eq(forms.publicId, input.publicId))
@@ -138,7 +147,7 @@ async function logRejectedLead(
       endpointId = row?.endpointId;
     }
     if (!endpointId) return;
-    await db.insert(logs).values({
+    await database.insert(logs).values({
       endpointId,
       type: "error",
       postType: "publicId" in input ? "form" : "http",
@@ -164,10 +173,11 @@ async function logRejectedLead(
 
 export async function acceptLead(
   input: AcceptLeadInput,
-  now = new Date()
+  now = new Date(),
+  database: typeof db = db
 ): Promise<AcceptanceResult> {
   try {
-    const accepted = await db.transaction(async (tx) => {
+    const accepted = await database.transaction(async (tx) => {
     const publicSubmission = "publicId" in input;
     const [row] = publicSubmission
       ? await tx
@@ -204,6 +214,9 @@ export async function acceptLead(
     if (publicSubmission) {
       const publicRow = row as typeof row & { form: typeof forms.$inferSelect };
       if (!publicRow.form.publishedDefinition) throw new LeadEndpointError("Form is not published.", 404);
+      if (publicRow.form.publishedRevision !== input.publishedRevision) {
+        throw new LeadStaleRevisionError(publicRow.form.publishedRevision);
+      }
       const definition = formDefinitionV1Schema.parse(publicRow.form.publishedDefinition);
       const validation = validateFormValues(definition, input.values);
       if (!validation.success) throw new LeadValidationError(validation.errors);
@@ -333,7 +346,7 @@ export async function acceptLead(
     };
     });
 
-    if (accepted.webhook) await deliverWebhook(accepted.webhook);
+    if (accepted.webhook) await deliverWebhook(accepted.webhook, database);
     if (accepted.formId && accepted.firstPlacement) {
       await captureServerEvent({
         event: "form_first_lead_by_placement",
@@ -352,7 +365,7 @@ export async function acceptLead(
           threshold,
           periodStart: accepted.periodStart,
           now,
-        });
+        }, database);
       } catch (error) {
         console.error(`Could not send ${threshold}% usage notification:`, error);
       }
@@ -367,7 +380,7 @@ export async function acceptLead(
       capacity: accepted.capacity,
     };
   } catch (error) {
-    await logRejectedLead(input, error, now);
+    await logRejectedLead(input, error, now, database);
     throw error;
   }
 }

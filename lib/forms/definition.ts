@@ -513,6 +513,19 @@ export function compileEndpointSchema(
   });
 }
 
+export function hasEndpointSchemaChanged(
+  draftInput: unknown,
+  publishedInput: unknown
+): boolean {
+  const draft = formDefinitionV1Schema.safeParse(draftInput);
+  const published = formDefinitionV1Schema.safeParse(publishedInput);
+  if (!draft.success || !published.success) return true;
+  return (
+    JSON.stringify(compileEndpointSchema(draft.data)) !==
+    JSON.stringify(compileEndpointSchema(published.data))
+  );
+}
+
 type FieldErrors = Record<string, string[]>;
 
 export type FormValuesResult =

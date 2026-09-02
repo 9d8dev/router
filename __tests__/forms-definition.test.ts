@@ -3,6 +3,7 @@ import {
   compileEndpointSchema,
   formDraftDefinitionV1Schema,
   formDefinitionV1Schema,
+  hasEndpointSchemaChanged,
   validateFormValues,
 } from "../lib/forms/definition";
 import { validateEndpointValues } from "../lib/forms/endpoint-schema";
@@ -172,6 +173,33 @@ describe("FormDefinitionV1", () => {
         },
       },
     ]);
+  });
+
+  it("distinguishes presentation edits from endpoint schema changes", () => {
+    expect(
+      hasEndpointSchemaChanged(
+        {
+          ...contactForm,
+          title: "Updated public title",
+          description: "Updated description",
+          submitLabel: "Continue",
+          completion: { type: "message", message: "Updated thanks" },
+        },
+        contactForm
+      )
+    ).toBe(false);
+
+    expect(
+      hasEndpointSchemaChanged(
+        {
+          ...contactForm,
+          fields: contactForm.fields.map((field) =>
+            field.id === "fld_email" ? { ...field, required: false } : field
+          ),
+        },
+        contactForm
+      )
+    ).toBe(true);
   });
 
   it("rejects endpoint attachments that cannot be represented without contract drift", () => {

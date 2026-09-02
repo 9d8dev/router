@@ -4,6 +4,7 @@ export type FormPlacement = "hosted" | "embed" | "wordpress";
 
 type SubmissionTokenInput = {
   publicId: string;
+  revision: number;
   placement: FormPlacement;
   origin: string;
 };
@@ -45,6 +46,7 @@ export function createSubmissionToken(
   const payload: SubmissionTokenPayload = {
     audience: "router-form-submission",
     publicId: input.publicId,
+    revision: input.revision,
     placement: input.placement,
     origin: input.origin,
     issuedAt: now.toISOString(),
@@ -85,6 +87,8 @@ export function verifySubmissionToken(
   if (
     payload.audience !== "router-form-submission" ||
     !payload.publicId ||
+    !Number.isInteger(payload.revision) ||
+    payload.revision < 1 ||
     !payload.origin ||
     !["hosted", "embed", "wordpress"].includes(payload.placement)
   ) {
@@ -101,10 +105,11 @@ export function verifySubmissionToken(
 
 export function submissionTokenMatchesRequest(
   payload: SubmissionTokenPayload,
-  request: { publicId: string; origin: string | null }
+  request: { publicId: string; revision?: number; origin: string | null }
 ): boolean {
   return (
     payload.publicId === request.publicId &&
+    (request.revision === undefined || payload.revision === request.revision) &&
     request.origin !== null &&
     payload.origin === request.origin
   );

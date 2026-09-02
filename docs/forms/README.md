@@ -31,6 +31,7 @@ Set `TEST_DATABASE_URL` to a disposable migrated PostgreSQL database before runn
 - `POSTGRES_URL`
 - `AUTH_SECRET`
 - `FORM_SUBMISSION_SECRET` (may fall back to `AUTH_SECRET`, but a distinct random secret is recommended)
+- `CRON_SECRET` for authenticating scheduled Forms maintenance requests
 - `RESEND_API_KEY` and `ROUTER_EMAIL_FROM` for 80% and 100% usage notices
 - New Pro and Business Stripe price IDs from `.env.example`
 - Optional PostHog public key and host for product events

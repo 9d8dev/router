@@ -20,6 +20,9 @@ vi.mock("@/lib/forms/lead-acceptance", () => {
   class LeadEndpointError extends Error {
     status = 503;
   }
+  class LeadStaleRevisionError extends Error {
+    currentRevision = 7;
+  }
   class LeadValidationError extends Error {
     fieldErrors = {};
   }
@@ -27,6 +30,7 @@ vi.mock("@/lib/forms/lead-acceptance", () => {
     acceptLead: mocks.acceptLead,
     LeadCapacityError,
     LeadEndpointError,
+    LeadStaleRevisionError,
     LeadValidationError,
   };
 });
@@ -103,7 +107,7 @@ describe("public form route origin enforcement", () => {
     });
     mocks.enforceFormRateLimit.mockReset();
     mocks.getPublishedForm.mockReset();
-    mocks.getPublishedForm.mockResolvedValue({ id: "form_1" });
+    mocks.getPublishedForm.mockResolvedValue({ id: "form_1", revision: 7 });
     mocks.isApprovedFormOrigin.mockReset();
     mocks.isApprovedFormOrigin.mockResolvedValue(true);
   });
@@ -113,11 +117,16 @@ describe("public form route origin enforcement", () => {
       renderSessionRequest("https://forms.router.so"),
       params
     );
-    const body = (await response.json()) as { submitToken: string };
+    const body = (await response.json()) as {
+      submitToken: string;
+      revision: number;
+    };
 
     expect(response.status).toBe(200);
+    expect(body.revision).toBe(7);
     expect(verifySubmissionToken(body.submitToken, { secret })).toMatchObject({
       publicId,
+      revision: 7,
       placement: "hosted",
       origin: "https://forms.router.so",
     });
@@ -141,6 +150,7 @@ describe("public form route origin enforcement", () => {
     const token = createSubmissionToken(
       {
         publicId,
+        revision: 7,
         placement: "hosted",
         origin: "https://forms.router.so",
       },
@@ -166,7 +176,7 @@ describe("public form route origin enforcement", () => {
     { placement: "wordpress" as const, origin: "https://wordpress.example" },
   ])("preserves legitimate $placement submissions", async ({ placement, origin }) => {
     const token = createSubmissionToken(
-      { publicId, placement, origin },
+      { publicId, revision: 7, placement, origin },
       { secret }
     );
     const response = await submitLead(leadRequest({ token, origin }), params);
@@ -174,7 +184,25 @@ describe("public form route origin enforcement", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe(origin);
     expect(mocks.acceptLead).toHaveBeenCalledWith(
-      expect.objectContaining({ publicId, placement })
+      expect.objectContaining({ publicId, placement, publishedRevision: 7 })
     );
+  });
+
+  it("rejects a submission token minted for a stale published revision", async () => {
+    const token = createSubmissionToken(
+      { publicId, revision: 6, placement: "embed", origin: "https://site.example" },
+      { secret }
+    );
+    const response = await submitLead(
+      leadRequest({ token, origin: "https://site.example" }),
+      params
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "stale_form_revision",
+      revision: 7,
+    });
+    expect(mocks.acceptLead).not.toHaveBeenCalled();
   });
 });

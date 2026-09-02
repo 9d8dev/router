@@ -24,7 +24,10 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { FormDefinitionV1, FormFieldV1 } from "@/lib/forms/definition";
-import { formDefinitionV1Schema } from "@/lib/forms/definition";
+import {
+  formDefinitionV1Schema,
+  hasEndpointSchemaChanged,
+} from "@/lib/forms/definition";
 import {
   addFormOrigin,
   deleteForm,
@@ -219,7 +222,7 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
   const selected = definition.fields.find((field) => field.id === selectedId) ?? null;
   const embedCode = `<div data-router-form="${form.publicId}"></div>\n<script async src="https://forms.router.so/embed/v1.js"></script>`;
   const schemaChanged = useMemo(
-    () => JSON.stringify(definition) !== JSON.stringify(form.publishedDefinition),
+    () => hasEndpointSchemaChanged(definition, form.publishedDefinition),
     [definition, form.publishedDefinition]
   );
 

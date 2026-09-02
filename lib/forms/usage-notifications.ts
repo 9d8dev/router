@@ -69,7 +69,7 @@ export async function deliverUsageThresholdNotification(input: {
   threshold: UsageThreshold;
   periodStart: string;
   now?: Date;
-}): Promise<boolean> {
+}, database: typeof db = db): Promise<boolean> {
   const now = input.now ?? new Date();
   const staleClaim = new Date(now.getTime() - notificationClaimLeaseMs);
   const notifiedColumn =
@@ -81,7 +81,7 @@ export async function deliverUsageThresholdNotification(input: {
       ? usagePeriods.notificationLimit80
       : usagePeriods.notificationLimit100;
 
-  const [claimed] = await db
+  const [claimed] = await database
     .update(usagePeriods)
     .set(
       input.threshold === 80
@@ -109,7 +109,7 @@ export async function deliverUsageThresholdNotification(input: {
       periodStart: input.periodStart,
       idempotencyKey: usageNotificationIdempotencyKey(input),
     });
-    await db
+    await database
       .update(usagePeriods)
       .set(
         input.threshold === 80
@@ -126,7 +126,7 @@ export async function deliverUsageThresholdNotification(input: {
       );
     return true;
   } catch (error) {
-    await db
+    await database
       .update(usagePeriods)
       .set(
         input.threshold === 80

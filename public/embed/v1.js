@@ -130,7 +130,11 @@
         input.value = option.value;
         input.id = id + "-" + index;
         if (field.required && field.kind !== "checkbox-group" && index === 0) input.required = true;
-        var defaults = Array.isArray(field.defaultValue) ? field.defaultValue : [String(field.defaultValue)];
+        var defaults = field.defaultValue === undefined
+          ? []
+          : Array.isArray(field.defaultValue)
+            ? field.defaultValue
+            : [String(field.defaultValue)];
         input.checked = defaults.indexOf(option.value) !== -1;
         choiceLabel.appendChild(input);
         choiceLabel.appendChild(document.createTextNode(option.label));
@@ -306,6 +310,7 @@
         var result = await response.json().catch(function () { return {}; });
         if (!response.ok) {
           if (result.fields) showErrors(form, result.fields);
+          else if (result.error === "stale_form_revision") throw new Error("This form changed while you were filling it out. Refresh the page and try again.");
           else throw new Error(result.error === "monthly_capacity_reached" ? "This form is temporarily paused." : "We couldn’t submit the form. Please try again.");
           return;
         }
@@ -348,6 +353,15 @@
       if (!responses[0].ok || !responses[1].ok) throw new Error("This form is unavailable.");
       var payload = await responses[0].json();
       var session = await responses[1].json();
+      if (payload.revision !== session.revision) {
+        var currentResponse = await fetch(
+          apiBase + "/api/public/forms/" + encodeURIComponent(publicId) + "?revision=" + encodeURIComponent(session.revision),
+          { cache: "no-store" }
+        );
+        if (!currentResponse.ok) throw new Error("This form is unavailable.");
+        payload = await currentResponse.json();
+        if (payload.revision !== session.revision) throw new Error("This form is updating. Refresh the page and try again.");
+      }
       render(target, payload, { publicId: publicId, placement: placement, submitToken: session.submitToken });
     } catch (error) {
       target.replaceChildren(element("p", "router-form-v1 router-form-v1__status", error && error.message ? error.message : "This form is unavailable."));

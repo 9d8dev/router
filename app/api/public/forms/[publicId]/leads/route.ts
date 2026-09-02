@@ -5,6 +5,7 @@ import {
   acceptLead,
   LeadCapacityError,
   LeadEndpointError,
+  LeadStaleRevisionError,
   LeadValidationError,
 } from "@/lib/forms/lead-acceptance";
 import { isHostedFormRequest, requestOrigin } from "@/lib/forms/origins";
@@ -88,6 +89,12 @@ export async function POST(
   const form = await getPublishedForm(publicId);
   if (!form) return NextResponse.json({ error: "form_not_found" }, { status: 404 });
   const corsHeaders = publicCorsHeaders(origin, true);
+  if (token.revision !== form.revision) {
+    return NextResponse.json(
+      { error: "stale_form_revision", revision: form.revision },
+      { status: 409, headers: corsHeaders }
+    );
+  }
 
   try {
     await enforceFormRateLimit({ formId: form.id, ip: clientIp(request) });
@@ -104,6 +111,7 @@ export async function POST(
     }
     const result = await acceptLead({
       publicId,
+      publishedRevision: token.revision,
       values: parsed.values,
       placement: token.placement,
     });
@@ -122,6 +130,12 @@ export async function POST(
       return NextResponse.json(
         { error: "monthly_capacity_reached", capacity: error.capacity },
         { status: 429, headers: corsHeaders }
+      );
+    }
+    if (error instanceof LeadStaleRevisionError) {
+      return NextResponse.json(
+        { error: "stale_form_revision", revision: error.currentRevision },
+        { status: 409, headers: corsHeaders }
       );
     }
     if (error instanceof FormRateLimitError) {

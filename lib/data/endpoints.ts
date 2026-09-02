@@ -15,6 +15,10 @@ import { randomBytes } from "crypto";
 import { redirect } from "next/navigation";
 import { invalidatePublishedForm } from "@/lib/forms/cache";
 import { endpointSchemaForUpdate } from "@/lib/forms/endpoint-schema";
+import {
+  AttachedFormExistsError,
+  deleteEndpointForUser,
+} from "@/lib/forms/lifecycle";
 
 async function invalidateAttachedPublishedForm(
   endpointId: string,
@@ -85,20 +89,14 @@ export const getPostingEndpointById = async (id: string) => {
 export const deleteEndpoint = authenticatedAction
   .schema(z.object({ id: z.string() }))
   .action(async ({ parsedInput: { id }, ctx: { userId } }) => {
-    const [attachedForm] = await db
-      .select({ id: forms.id })
-      .from(forms)
-      .innerJoin(endpoints, eq(forms.endpointId, endpoints.id))
-      .where(and(eq(forms.endpointId, id), eq(endpoints.userId, userId)))
-      .limit(1);
-    if (attachedForm) {
-      throw new ActionError(
-        "Remove the attached form before deleting this endpoint. Existing leads are preserved when the form is removed."
-      );
+    try {
+      await deleteEndpointForUser({ id, userId });
+    } catch (error) {
+      if (error instanceof AttachedFormExistsError) {
+        throw new ActionError(error.message);
+      }
+      throw error;
     }
-    await db
-      .delete(endpoints)
-      .where(and(eq(endpoints.id, id), eq(endpoints.userId, userId)));
     revalidatePath("/endpoints");
   });
 

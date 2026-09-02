@@ -51,9 +51,11 @@ export async function POST(
     {
       submitToken: createSubmissionToken({
         publicId,
+        revision: form.revision,
         placement: input.data.placement,
         origin,
       }),
+      revision: form.revision,
       expiresIn: 3600,
     },
     { headers }
