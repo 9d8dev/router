@@ -8,7 +8,10 @@ import {
   shouldApplySubscriptionEvent,
   subscriptionEntitlementState,
 } from "../lib/forms/stripe-subscription-state";
-import { legacyMigrationDecision } from "../lib/forms/stripe-legacy-migration";
+import {
+  executeLegacySubscriptionMigration,
+  shouldMigrateLegacySubscriptionStatus,
+} from "../lib/forms/stripe-legacy-migration";
 import { getStripe } from "../lib/utils/stripe-client";
 import { and, eq, isNull } from "drizzle-orm";
 
@@ -32,97 +35,112 @@ async function main() {
       status: "all",
       limit: 100,
     })) {
-      if (!["active", "trialing", "past_due", "unpaid"].includes(subscription.status)) {
+      if (!shouldMigrateLegacySubscriptionStatus(subscription.status)) {
         continue;
       }
       inspected += 1;
-      let currentSubscription = subscription;
-      const decision = legacyMigrationDecision({
-        apply,
-        cancelAtPeriodEnd: subscription.cancel_at_period_end,
-      });
-      if (currentSubscription.cancel_at_period_end) {
+      if (subscription.cancel_at_period_end) {
         alreadyScheduled += 1;
       }
-      if (decision.updateStripe) {
-        currentSubscription = await stripe.subscriptions.update(subscription.id, {
-          cancel_at_period_end: true,
-        });
-        changed += 1;
-      }
+      const result = await executeLegacySubscriptionMigration(
+        {
+          apply,
+          cancelAtPeriodEnd: subscription.cancel_at_period_end,
+          subscription,
+        },
+        {
+          preflight: async (currentSubscription) => {
+            const userCondition = currentSubscription.metadata.routerUserId
+              ? eq(users.id, currentSubscription.metadata.routerUserId)
+              : eq(
+                  users.stripeCustomerId,
+                  currentSubscription.customer as string
+                );
+            const [owner] = await db
+              .select({
+                id: users.id,
+                stripeSubscriptionId: users.stripeSubscriptionId,
+                stripeSubscriptionStatus: users.stripeSubscriptionStatus,
+                stripeSubscriptionCreatedAt: users.stripeSubscriptionCreatedAt,
+              })
+              .from(users)
+              .where(userCondition)
+              .limit(1);
+            if (!owner) {
+              throw new Error(
+                `Could not find Router user for subscription ${currentSubscription.id}.`
+              );
+            }
+            if (
+              !shouldApplySubscriptionEvent({
+                storedSubscriptionId: owner.stripeSubscriptionId,
+                storedSubscriptionStatus: owner.stripeSubscriptionStatus,
+                storedSubscriptionCreatedAt: owner.stripeSubscriptionCreatedAt,
+                eventSubscriptionId: currentSubscription.id,
+                eventCreatedAt: new Date(currentSubscription.created * 1_000),
+              })
+            ) {
+              return null;
+            }
+            return owner;
+          },
+          scheduleCancellation: (currentSubscription) =>
+            stripe.subscriptions.update(currentSubscription.id, {
+              cancel_at_period_end: true,
+            }),
+          reconcile: async (owner, currentSubscription) => {
+            const [updatedUser] = await db
+              .update(users)
+              .set(
+                subscriptionEntitlementState({
+                  priceId: currentSubscription.items.data[0]?.price.id ?? price,
+                  customerId: currentSubscription.customer as string,
+                  subscriptionId: currentSubscription.id,
+                  status: currentSubscription.status,
+                  createdAt: currentSubscription.created,
+                  currentPeriodEnd: currentSubscription.current_period_end,
+                  cancelAtPeriodEnd: currentSubscription.cancel_at_period_end,
+                })
+              )
+              .where(
+                and(
+                  eq(users.id, owner.id),
+                  owner.stripeSubscriptionId === null
+                    ? isNull(users.stripeSubscriptionId)
+                    : eq(users.stripeSubscriptionId, owner.stripeSubscriptionId),
+                  owner.stripeSubscriptionStatus === null
+                    ? isNull(users.stripeSubscriptionStatus)
+                    : eq(
+                        users.stripeSubscriptionStatus,
+                        owner.stripeSubscriptionStatus
+                      ),
+                  owner.stripeSubscriptionCreatedAt === null
+                    ? isNull(users.stripeSubscriptionCreatedAt)
+                    : eq(
+                        users.stripeSubscriptionCreatedAt,
+                        owner.stripeSubscriptionCreatedAt
+                      )
+                )
+              )
+              .returning({ id: users.id });
+            if (!updatedUser) {
+              throw new Error(
+                `Router user changed while reconciling subscription ${currentSubscription.id}.`
+              );
+            }
+          },
+        }
+      );
 
-      if (decision.reconcileRouter) {
-        const userCondition = currentSubscription.metadata.routerUserId
-          ? eq(users.id, currentSubscription.metadata.routerUserId)
-          : eq(users.stripeCustomerId, currentSubscription.customer as string);
-        const [owner] = await db
-          .select({
-            id: users.id,
-            stripeSubscriptionId: users.stripeSubscriptionId,
-            stripeSubscriptionStatus: users.stripeSubscriptionStatus,
-            stripeSubscriptionCreatedAt: users.stripeSubscriptionCreatedAt,
-          })
-          .from(users)
-          .where(userCondition)
-          .limit(1);
-        if (!owner) {
-          throw new Error(
-            `Could not find Router user for subscription ${currentSubscription.id}.`
-          );
-        }
-        if (
-          !shouldApplySubscriptionEvent({
-            storedSubscriptionId: owner.stripeSubscriptionId,
-            storedSubscriptionStatus: owner.stripeSubscriptionStatus,
-            storedSubscriptionCreatedAt: owner.stripeSubscriptionCreatedAt,
-            eventSubscriptionId: currentSubscription.id,
-            eventCreatedAt: new Date(currentSubscription.created * 1_000),
-          })
-        ) {
-          console.log(
-            `${currentSubscription.id}\tsuperseded subscription ignored\t${price}`
-          );
-          continue;
-        }
-        const [updatedUser] = await db
-          .update(users)
-          .set(
-            subscriptionEntitlementState({
-              priceId: currentSubscription.items.data[0]?.price.id ?? price,
-              customerId: currentSubscription.customer as string,
-              subscriptionId: currentSubscription.id,
-              status: currentSubscription.status,
-              createdAt: currentSubscription.created,
-              currentPeriodEnd: currentSubscription.current_period_end,
-              cancelAtPeriodEnd: currentSubscription.cancel_at_period_end,
-            })
-          )
-          .where(
-            and(
-              eq(users.id, owner.id),
-              owner.stripeSubscriptionId === null
-                ? isNull(users.stripeSubscriptionId)
-                : eq(users.stripeSubscriptionId, owner.stripeSubscriptionId),
-              owner.stripeSubscriptionStatus === null
-                ? isNull(users.stripeSubscriptionStatus)
-                : eq(users.stripeSubscriptionStatus, owner.stripeSubscriptionStatus),
-              owner.stripeSubscriptionCreatedAt === null
-                ? isNull(users.stripeSubscriptionCreatedAt)
-                : eq(
-                    users.stripeSubscriptionCreatedAt,
-                    owner.stripeSubscriptionCreatedAt
-                  )
-            )
-          )
-          .returning({ id: users.id });
-        if (!updatedUser) {
-          throw new Error(
-            `Router user changed while reconciling subscription ${currentSubscription.id}.`
-          );
-        }
+      if (result.updatedStripe) changed += 1;
+      if (result.outcome === "superseded") {
+        console.log(
+          `${subscription.id}\tsuperseded subscription ignored\t${price}`
+        );
+      } else if (result.outcome === "reconciled") {
         reconciled += 1;
         console.log(
-          `${currentSubscription.id}\t${subscription.cancel_at_period_end ? "already scheduled and reconciled" : "scheduled and reconciled"}\t${price}`
+          `${result.subscription.id}\t${subscription.cancel_at_period_end ? "already scheduled and reconciled" : "scheduled and reconciled"}\t${price}`
         );
       } else {
         console.log(

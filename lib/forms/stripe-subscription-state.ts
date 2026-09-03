@@ -68,7 +68,7 @@ export function stripeCheckoutMetadata(
 export function subscriptionEntitlementState(
   subscription: StripeSubscriptionSnapshot
 ): {
-  plan: RouterPlan;
+  plan?: RouterPlan;
   stripeCustomerId: string;
   stripeSubscriptionId: string;
   stripeSubscriptionStatus: string;
@@ -85,8 +85,7 @@ export function subscriptionEntitlementState(
   const plan = newPlan ?? legacyPlan;
   if (!plan) throw new Error(`Unrecognized Stripe price: ${subscription.priceId}`);
 
-  return {
-    plan,
+  const state = {
     stripeCustomerId: subscription.customerId,
     stripeSubscriptionId: subscription.subscriptionId,
     stripeSubscriptionStatus: subscription.status,
@@ -95,6 +94,9 @@ export function subscriptionEntitlementState(
     stripeCancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
     legacyPriceMigrationRequired: Boolean(legacyPlan),
   };
+  return subscription.status === "active" || subscription.status === "trialing"
+    ? { ...state, plan }
+    : state;
 }
 
 export function endedSubscriptionState(

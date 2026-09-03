@@ -98,12 +98,16 @@ function fieldSchema(field: CompatibleEndpointField): z.ZodTypeAny {
       let arraySchema = z.array(z.string());
       if (constraints?.minItems !== undefined) arraySchema = arraySchema.min(constraints.minItems);
       if (constraints?.maxItems !== undefined) arraySchema = arraySchema.max(constraints.maxItems);
+      const uniqueSchema = arraySchema.refine(
+        (values) => new Set(values).size === values.length,
+        "Contains duplicate options."
+      );
       schema = constraints?.allowedValues
-        ? arraySchema.refine(
+        ? uniqueSchema.refine(
             (values) => values.every((value) => constraints.allowedValues!.includes(value)),
             "Contains an invalid option."
           )
-        : arraySchema;
+        : uniqueSchema;
       break;
     }
     case "string":

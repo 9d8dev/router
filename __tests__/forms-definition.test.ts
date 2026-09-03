@@ -412,6 +412,34 @@ describe("validateFormValues", () => {
     }
   });
 
+  it("rejects repeated checkbox-group selections in public and endpoint validation", () => {
+    const definition = formDefinitionV1Schema.parse({
+      ...contactForm,
+      fields: [
+        {
+          id: "fld_topics",
+          key: "topics",
+          kind: "checkbox-group",
+          label: "Topics",
+          required: true,
+          options: [
+            { id: "opt_sales", label: "Sales", value: "sales" },
+            { id: "opt_support", label: "Support", value: "support" },
+          ],
+          validation: { minSelections: 2 },
+        },
+      ],
+    });
+    const repeatedValues = { topics: ["sales", "sales"] };
+
+    expect(validateFormValues(definition, repeatedValues)).toMatchObject({
+      success: false,
+    });
+    expect(
+      validateEndpointValues(compileEndpointSchema(definition), repeatedValues)
+    ).toMatchObject({ success: false });
+  });
+
   it("rejects an empty string for a required numeric field", () => {
     const definition = formDefinitionV1Schema.parse({
       ...contactForm,
@@ -432,6 +460,29 @@ describe("validateFormValues", () => {
       errors: { count: ["This field is required."] },
     });
   });
+
+  it.each([null, false, true])(
+    "rejects the non-number value %j for a numeric field",
+    (value) => {
+      const definition = formDefinitionV1Schema.parse({
+        ...contactForm,
+        fields: [
+          {
+            id: "fld_count",
+            key: "count",
+            kind: "number",
+            label: "Count",
+            required: true,
+            validation: { min: 0 },
+          },
+        ],
+      });
+
+      expect(validateFormValues(definition, { count: value })).toMatchObject({
+        success: false,
+      });
+    }
+  );
 
   it("enforces every authored string and number constraint", () => {
     const constrainedForm = formDefinitionV1Schema.parse({

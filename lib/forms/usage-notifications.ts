@@ -17,10 +17,16 @@ export function crossedUsageThresholds(input: {
   return thresholds;
 }
 
+export function usageNotificationLeadCount(input: {
+  threshold: UsageThreshold;
+  limit: number;
+}): number {
+  return input.threshold === 80 ? Math.ceil(input.limit * 0.8) : input.limit;
+}
+
 export async function sendUsageThresholdNotification(input: {
   email: string;
   threshold: UsageThreshold;
-  used: number;
   limit: number;
   periodStart: string;
   idempotencyKey?: string;
@@ -44,7 +50,7 @@ export async function sendUsageThresholdNotification(input: {
       from: process.env.ROUTER_EMAIL_FROM || "info@router.so",
       to: [input.email],
       subject,
-      text: `${subject}\n\n${input.used.toLocaleString()} of ${input.limit.toLocaleString()} leads have been accepted for the UTC month beginning ${input.periodStart}. ${graceMessage}\n\nReview usage: ${appUrl}/upgrade\n`,
+      text: `${subject}\n\nAt least ${usageNotificationLeadCount(input).toLocaleString()} of ${input.limit.toLocaleString()} leads have been accepted for the UTC month beginning ${input.periodStart}. ${graceMessage}\n\nReview usage: ${appUrl}/upgrade\n`,
     },
     input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : undefined
   );
@@ -97,14 +103,13 @@ export async function deliverUsageThresholdNotification(input: {
         or(isNull(notifyingColumn), lt(notifyingColumn, staleClaim)),
       )
     )
-    .returning({ used: usagePeriods.leadCount, limit: limitColumn });
+    .returning({ limit: limitColumn });
   if (!claimed || claimed.limit === null) return false;
 
   try {
     await sendUsageThresholdNotification({
       email: input.email,
       threshold: input.threshold,
-      used: claimed.used,
       limit: claimed.limit,
       periodStart: input.periodStart,
       idempotencyKey: usageNotificationIdempotencyKey(input),

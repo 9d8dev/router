@@ -258,6 +258,20 @@
     if (first) first.focus();
   }
 
+  async function requestRenderSession(publicId, placement) {
+    var response = await fetch(apiBase + "/api/public/forms/" + encodeURIComponent(publicId) + "/render-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ placement: placement })
+    });
+    if (!response.ok) throw new Error("This form is unavailable.");
+    return response.json();
+  }
+
+  function sessionExpiresAt(session) {
+    return Date.now() + Math.max(0, Number(session.expiresIn) || 0) * 1000;
+  }
+
   function render(target, payload, options) {
     installStyles(target.ownerDocument);
     var definition = payload.definition || payload;
@@ -312,6 +326,17 @@
       submit.disabled = true;
       submit.textContent = "Submitting…";
       try {
+        if (
+          options.refreshSubmitToken &&
+          Date.now() >= options.submitTokenExpiresAt - 30000
+        ) {
+          var refreshedSession = await options.refreshSubmitToken();
+          if (refreshedSession.revision !== payload.revision) {
+            throw new Error("This form changed while you were filling it out. Refresh the page and try again.");
+          }
+          options.submitToken = refreshedSession.submitToken;
+          options.submitTokenExpiresAt = sessionExpiresAt(refreshedSession);
+        }
         var response = await fetch(apiBase + "/api/public/forms/" + encodeURIComponent(publicId) + "/leads", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -359,15 +384,11 @@
       target.setAttribute("aria-busy", "true");
       var responses = await Promise.all([
         fetch(apiBase + "/api/public/forms/" + encodeURIComponent(publicId)),
-        fetch(apiBase + "/api/public/forms/" + encodeURIComponent(publicId) + "/render-session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ placement: placement })
-        })
+        requestRenderSession(publicId, placement)
       ]);
-      if (!responses[0].ok || !responses[1].ok) throw new Error("This form is unavailable.");
+      if (!responses[0].ok) throw new Error("This form is unavailable.");
       var payload = await responses[0].json();
-      var session = await responses[1].json();
+      var session = responses[1];
       if (payload.revision !== session.revision) {
         var currentResponse = await fetch(
           apiBase + "/api/public/forms/" + encodeURIComponent(publicId) + "?revision=" + encodeURIComponent(session.revision),
@@ -377,7 +398,15 @@
         payload = await currentResponse.json();
         if (payload.revision !== session.revision) throw new Error("This form is updating. Refresh the page and try again.");
       }
-      render(target, payload, { publicId: publicId, placement: placement, submitToken: session.submitToken });
+      render(target, payload, {
+        publicId: publicId,
+        placement: placement,
+        submitToken: session.submitToken,
+        submitTokenExpiresAt: sessionExpiresAt(session),
+        refreshSubmitToken: function () {
+          return requestRenderSession(publicId, placement);
+        }
+      });
     } catch (error) {
       target.replaceChildren(element("p", "router-form-v1 router-form-v1__status", error && error.message ? error.message : "This form is unavailable."));
     } finally {

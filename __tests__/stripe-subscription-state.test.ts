@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   endedSubscriptionState,
   failedPaymentState,
@@ -8,7 +8,11 @@ import {
   stripeCheckoutMetadata,
   subscriptionEntitlementState,
 } from "../lib/forms/stripe-subscription-state";
-import { legacyMigrationDecision } from "../lib/forms/stripe-legacy-migration";
+import {
+  executeLegacySubscriptionMigration,
+  legacyMigrationDecision,
+  shouldMigrateLegacySubscriptionStatus,
+} from "../lib/forms/stripe-legacy-migration";
 import {
   LEGACY_STRIPE_PRICE_IDS_BY_MODE,
   LEGACY_STRIPE_PRICE_TO_PLAN,
@@ -59,6 +63,36 @@ describe("Stripe entitlement transitions", () => {
     ).toEqual({ updateStripe: true, reconcileRouter: true });
   });
 
+  it("includes paused legacy subscriptions while excluding ended subscriptions", () => {
+    expect(shouldMigrateLegacySubscriptionStatus("paused")).toBe(true);
+    expect(shouldMigrateLegacySubscriptionStatus("active")).toBe(true);
+    expect(shouldMigrateLegacySubscriptionStatus("canceled")).toBe(false);
+  });
+
+  it("does not mutate Stripe when Router ownership cannot be validated", async () => {
+    const scheduleCancellation = vi.fn();
+    const reconcile = vi.fn();
+
+    await expect(
+      executeLegacySubscriptionMigration(
+        {
+          apply: true,
+          cancelAtPeriodEnd: false,
+          subscription: { id: "sub_unmapped" },
+        },
+        {
+          preflight: async () => {
+            throw new Error("Could not find Router user.");
+          },
+          scheduleCancellation,
+          reconcile,
+        }
+      )
+    ).rejects.toThrow("Could not find Router user");
+    expect(scheduleCancellation).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
   it("recognizes a new checkout or resubscription price", () => {
     process.env.STRIPE_PRO_MONTHLY_PRICE_ID = "price_new_pro";
     expect(subscriptionEntitlementState(subscription("price_new_pro"))).toMatchObject({
@@ -67,6 +101,25 @@ describe("Stripe entitlement transitions", () => {
       stripeSubscriptionStatus: "active",
     });
   });
+
+  it.each(["incomplete", "past_due", "unpaid", "paused"])(
+    "records a %s subscription without granting paid entitlements",
+    (status) => {
+      process.env.STRIPE_PRO_MONTHLY_PRICE_ID = "price_new_pro";
+      const state = subscriptionEntitlementState({
+        ...subscription("price_new_pro"),
+        status,
+      });
+
+      expect(state).toEqual(
+        expect.objectContaining({
+          stripeSubscriptionId: "sub_router",
+          stripeSubscriptionStatus: status,
+        })
+      );
+      expect(state).not.toHaveProperty("plan");
+    }
+  );
 
   it("preserves a legacy entitlement and its confirmed period-end cancellation", () => {
     expect(

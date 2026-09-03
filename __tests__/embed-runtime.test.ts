@@ -84,6 +84,7 @@ describe("embed v1 runtime", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     document.body.innerHTML = "";
   });
 
@@ -255,6 +256,64 @@ describe("embed v1 runtime", () => {
     expect(status.textContent).toBe("Submission received.");
     expect(status.getAttribute("aria-live")).toBe("polite");
     expect(document.activeElement).toBe(status);
+  });
+
+  it("renews an expired render session before submitting entered values", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    let sessionCalls = 0;
+    const submissions: Array<Record<string, unknown>> = [];
+    const liveDefinition: FormDefinitionV1 = {
+      ...definition,
+      fields: [],
+      completion: { type: "message", message: "Renewed" },
+    };
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl.endsWith("/render-session")) {
+        sessionCalls += 1;
+        return new Response(
+          JSON.stringify({
+            submitToken: `token-${sessionCalls}`,
+            revision: 1,
+            expiresIn: 3600,
+          }),
+          { status: 200 }
+        );
+      }
+      if (requestUrl.endsWith("/leads")) {
+        submissions.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(
+          JSON.stringify({
+            leadId: "lead_renewed",
+            completion: liveDefinition.completion,
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          publicId: "live-form",
+          revision: 1,
+          definition: liveDefinition,
+          attribution: { visible: false },
+        }),
+        { status: 200 }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    const runtime = (window as unknown as { RouterFormsV1: Runtime }).RouterFormsV1;
+
+    await runtime.mount(target, { publicId: "live-form" });
+    now.mockReturnValue(3_602_000);
+    target.querySelector("form")!.dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    await vi.waitFor(() => expect(submissions).toHaveLength(1));
+
+    expect(sessionCalls).toBe(2);
+    expect(submissions[0]).toMatchObject({ submitToken: "token-2" });
   });
 
   it("refreshes a cached definition that does not match the render session", async () => {

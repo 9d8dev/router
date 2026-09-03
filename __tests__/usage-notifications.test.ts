@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   crossedUsageThresholds,
   sendUsageThresholdNotification,
+  usageNotificationLeadCount,
 } from "../lib/forms/usage-notifications";
 
 describe("usage notification thresholds", () => {
@@ -21,6 +22,11 @@ describe("usage notification thresholds", () => {
     expect(crossedUsageThresholds({ used: 1_000_000, limit: null })).toEqual([]);
   });
 
+  it("uses a stable threshold count in retried notification content", () => {
+    expect(usageNotificationLeadCount({ threshold: 80, limit: 101 })).toBe(81);
+    expect(usageNotificationLeadCount({ threshold: 100, limit: 101 })).toBe(101);
+  });
+
   it("keeps delivery retryable when email is not configured", async () => {
     const originalKey = process.env.RESEND_API_KEY;
     delete process.env.RESEND_API_KEY;
@@ -28,7 +34,6 @@ describe("usage notification thresholds", () => {
       sendUsageThresholdNotification({
         email: "owner@example.com",
         threshold: 80,
-        used: 80,
         limit: 100,
         periodStart: "2026-09-01",
       })

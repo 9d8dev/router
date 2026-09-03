@@ -586,7 +586,7 @@ function schemaForField(field: FormFieldV1): z.ZodTypeAny {
     case "number":
     case "slider": {
       const schema = numberSchemaWithConstraints(
-        z.coerce.number().finite("Enter a valid number."),
+        z.number().finite("Enter a valid number."),
         field.validation
       );
       const optionalSchema = z.preprocess(
@@ -618,6 +618,10 @@ function schemaForField(field: FormFieldV1): z.ZodTypeAny {
             : undefined
         )
         .max(field.validation?.maxSelections ?? field.options.length)
+        .refine(
+          (values) => new Set(values).size === values.length,
+          "Choose each option only once."
+        )
         .refine((values) => values.every((value) => allowed.has(value)), "Choose only valid options.");
       return field.required ? schema : schema.optional();
     }
