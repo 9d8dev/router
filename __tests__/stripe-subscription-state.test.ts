@@ -9,6 +9,11 @@ import {
   subscriptionEntitlementState,
 } from "../lib/forms/stripe-subscription-state";
 import { legacyMigrationDecision } from "../lib/forms/stripe-legacy-migration";
+import {
+  LEGACY_STRIPE_PRICE_IDS_BY_MODE,
+  LEGACY_STRIPE_PRICE_TO_PLAN,
+  stripeModeForSecretKey,
+} from "../lib/constants/stripe";
 
 const originalEnv = { ...process.env };
 
@@ -29,6 +34,19 @@ function subscription(priceId: string, cancelAtPeriodEnd = false) {
 }
 
 describe("Stripe entitlement transitions", () => {
+  it("keeps legacy migration prices separated by Stripe mode", () => {
+    expect(stripeModeForSecretKey("sk_test_example")).toBe("test");
+    expect(stripeModeForSecretKey("rk_live_example")).toBe("live");
+    expect(stripeModeForSecretKey("not-a-stripe-key")).toBeNull();
+
+    const testPrices = new Set(LEGACY_STRIPE_PRICE_IDS_BY_MODE.test);
+    const livePrices = new Set(LEGACY_STRIPE_PRICE_IDS_BY_MODE.live);
+    expect([...testPrices].some((price) => livePrices.has(price))).toBe(false);
+    expect(new Set([...testPrices, ...livePrices])).toEqual(
+      new Set(Object.keys(LEGACY_STRIPE_PRICE_TO_PLAN))
+    );
+  });
+
   it("reconciles already-scheduled legacy subscriptions only in apply mode", () => {
     expect(
       legacyMigrationDecision({ apply: true, cancelAtPeriodEnd: true })

@@ -9,6 +9,12 @@ import {
 } from "@/lib/forms/public-access";
 import { createSubmissionToken } from "@/lib/forms/submission-token";
 import { publicFormsEnabled } from "@/lib/forms/feature-flags";
+import {
+  PayloadTooLargeError,
+  readLimitedJsonBody,
+} from "@/lib/forms/request-body";
+
+const MAX_BODY_BYTES = 64 * 1024;
 
 const inputSchema = z.object({
   placement: z.enum(["hosted", "embed", "wordpress"]),
@@ -22,7 +28,17 @@ export async function POST(
     return NextResponse.json({ error: "form_not_found" }, { status: 404 });
   }
   const { publicId } = await params;
-  const input = inputSchema.safeParse(await request.json().catch(() => null));
+  let body: unknown;
+  try {
+    body = await readLimitedJsonBody(request, MAX_BODY_BYTES);
+  } catch (error) {
+    const status = error instanceof PayloadTooLargeError ? 413 : 400;
+    return NextResponse.json(
+      { error: status === 413 ? "payload_too_large" : "invalid_request" },
+      { status }
+    );
+  }
+  const input = inputSchema.safeParse(body);
   if (!input.success) {
     return NextResponse.json({ error: "invalid_placement" }, { status: 400 });
   }

@@ -2,7 +2,7 @@
 
 import Script from "next/script";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import posthog from "posthog-js";
 import {
@@ -201,17 +201,81 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
     revisionRef.current = revision;
   }, [revision]);
 
-  function persistLatest(): Promise<boolean> {
-    return saveQueue.persist();
-  }
+  const persistLatest = useCallback((): Promise<boolean> => saveQueue.persist(), [
+    saveQueue,
+  ]);
+  const hasUnsavedChanges = useCallback(
+    () => JSON.stringify(latestRef.current) !== lastSavedRef.current,
+    []
+  );
 
   useEffect(() => {
     if (JSON.stringify({ name, definition }) === lastSavedRef.current) return;
     const timeout = window.setTimeout(() => void persistLatest(), 850);
     return () => window.clearTimeout(timeout);
-    // persistLatest intentionally reads the latest refs; draft changes own this debounce.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, definition]);
+  }, [name, definition, persistLatest]);
+
+  useEffect(() => {
+    const handleDocumentClick = (event: MouseEvent) => {
+      if (
+        !hasUnsavedChanges() ||
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+      const clicked = event.target;
+      const anchor =
+        clicked instanceof Element ? clicked.closest<HTMLAnchorElement>("a[href]") : null;
+      if (
+        !anchor ||
+        anchor.target === "_blank" ||
+        anchor.hasAttribute("download")
+      ) {
+        return;
+      }
+      const destination = new URL(anchor.href, window.location.href);
+      if (
+        destination.origin !== window.location.origin ||
+        destination.href === window.location.href
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      void persistLatest().then((saved) => {
+        if (saved) {
+          router.push(
+            `${destination.pathname}${destination.search}${destination.hash}`
+          );
+        }
+      });
+    };
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasUnsavedChanges()) return;
+      void persistLatest();
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    const handlePageHide = () => {
+      if (hasUnsavedChanges()) void persistLatest();
+    };
+
+    document.addEventListener("click", handleDocumentClick, true);
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      document.removeEventListener("click", handleDocumentClick, true);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      window.removeEventListener("pagehide", handlePageHide);
+      if (hasUnsavedChanges()) void persistLatest();
+    };
+  }, [hasUnsavedChanges, persistLatest, router]);
 
   useEffect(() => {
     if (!previewRef.current || !window.RouterFormsV1) return;

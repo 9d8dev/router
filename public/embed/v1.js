@@ -167,6 +167,7 @@
       checkbox.name = field.key;
       checkbox.required = Boolean(field.required);
       checkbox.checked = Boolean(field.defaultValue);
+      if (helpId) checkbox.setAttribute("aria-describedby", helpId);
       checkLabel.appendChild(checkbox);
       checkLabel.appendChild(document.createTextNode(field.label + (field.required ? " (required)" : "")));
       wrapper.insertBefore(checkLabel, wrapper.firstChild);
@@ -181,6 +182,7 @@
       range.step = String(field.validation && field.validation.step !== undefined ? field.validation.step : 1);
       range.value = String(field.defaultValue !== undefined ? field.defaultValue : range.min);
       range.dataset.routerTouched = String(field.required || field.defaultValue !== undefined);
+      if (helpId) range.setAttribute("aria-describedby", helpId);
       var rangeValue = element("output", "router-form-v1__range-value", range.value);
       rangeValue.htmlFor = id;
       range.addEventListener("input", function () {
@@ -210,7 +212,7 @@
   function valuesFrom(form, definition) {
     var values = {};
     definition.fields.forEach(function (field) {
-      var controls = form.elements[field.key];
+      var controls = form.elements.namedItem(field.key);
       if (field.kind === "checkbox-group") {
         var group = controls && controls.length !== undefined ? Array.prototype.slice.call(controls) : [controls];
         values[field.key] = group.filter(function (control) { return control && control.checked; }).map(function (control) { return control.value; });

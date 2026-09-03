@@ -232,6 +232,32 @@ describe("public form route origin enforcement", () => {
     expect(mocks.acceptLead).not.toHaveBeenCalled();
   });
 
+  it("applies the payload ceiling before creating a render session", async () => {
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(64 * 1024 + 1));
+      },
+      cancel,
+    });
+    const request = new Request(
+      `https://forms.router.so/api/public/forms/${publicId}/render-session`,
+      {
+        method: "POST",
+        headers: { origin: "https://forms.router.so" },
+        body,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" }
+    );
+
+    const response = await createRenderSession(request, params);
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({ error: "payload_too_large" });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(mocks.getPublishedForm).not.toHaveBeenCalled();
+  });
+
   it.each([
     { placement: "hosted" as const, origin: "https://forms.router.so" },
     { placement: "embed" as const, origin: "https://site.example" },

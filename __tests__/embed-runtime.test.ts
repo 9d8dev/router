@@ -152,6 +152,68 @@ describe("embed v1 runtime", () => {
     });
   });
 
+  it.each(["length", "item", "namedItem"])(
+    "submits a field whose key collides with form.elements.%s",
+    async (key) => {
+      const { target, submissions } = await mountLiveForm({
+        ...definition,
+        fields: [
+          {
+            id: `field_${key}`,
+            key,
+            kind: "text",
+            label: key,
+            required: true,
+          },
+        ],
+      });
+      const input = target.querySelector<HTMLInputElement>(
+        `[data-router-field="${key}"] input`
+      )!;
+      input.value = "submitted value";
+
+      target.querySelector("form")!.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true })
+      );
+      await vi.waitFor(() => expect(submissions).toHaveLength(1));
+
+      expect(submissions[0].values).toEqual({ [key]: "submitted value" });
+    }
+  );
+
+  it.each(["checkbox", "switch", "slider"] as const)(
+    "associates %s help text with its input",
+    async (kind) => {
+      const target = document.createElement("div");
+      document.body.appendChild(target);
+      const runtime = (window as unknown as {
+        RouterFormsV1: { mount: (target: Element, options: object) => Promise<void> };
+      }).RouterFormsV1;
+      const field = {
+        id: `field_${kind}`,
+        key: `field_${kind}`,
+        kind,
+        label: kind,
+        helpText: `${kind} help`,
+        required: false,
+        ...(kind === "slider" ? { validation: { min: 0, max: 10 } } : {}),
+      } as FormDefinitionV1["fields"][number];
+
+      await runtime.mount(target, {
+        definition: { ...definition, fields: [field] },
+        publicId: "help-text",
+        preview: true,
+      });
+
+      const input = target.querySelector<HTMLInputElement>("input")!;
+      const descriptionId = input.getAttribute("aria-describedby");
+      expect(descriptionId).toBeTruthy();
+      expect(target.querySelector(`#${descriptionId}`)?.textContent).toBe(
+        `${kind} help`
+      );
+    }
+  );
+
   it("omits an untouched optional slider without a default", async () => {
     const { target, submissions } = await mountLiveForm({
       ...definition,

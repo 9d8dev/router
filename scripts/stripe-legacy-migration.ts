@@ -1,4 +1,7 @@
-import { LEGACY_STRIPE_PRICE_TO_PLAN } from "../lib/constants/stripe";
+import {
+  LEGACY_STRIPE_PRICE_IDS_BY_MODE,
+  stripeModeForSecretKey,
+} from "../lib/constants/stripe";
 import { db } from "../lib/db";
 import { users } from "../lib/db/schema";
 import {
@@ -11,13 +14,19 @@ import { and, eq, isNull } from "drizzle-orm";
 
 async function main() {
   const apply = process.argv.includes("--apply");
+  const stripeMode = stripeModeForSecretKey(process.env.STRIPE_SECRET_KEY ?? "");
+  if (!stripeMode) {
+    throw new Error(
+      "STRIPE_SECRET_KEY must be a test- or live-mode Stripe secret key."
+    );
+  }
   const stripe = getStripe();
   let inspected = 0;
   let alreadyScheduled = 0;
   let changed = 0;
   let reconciled = 0;
 
-  for (const price of Object.keys(LEGACY_STRIPE_PRICE_TO_PLAN)) {
+  for (const price of LEGACY_STRIPE_PRICE_IDS_BY_MODE[stripeMode]) {
     for await (const subscription of stripe.subscriptions.list({
       price,
       status: "all",
