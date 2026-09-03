@@ -296,15 +296,58 @@ export function seedDefinitionFromEndpoint(
   } as FormDefinitionV1;
 }
 
+function canonicalEndpointContract(field: EndpointSeedField) {
+  const legacy = field.required === undefined;
+  const constraints = {
+    ...(field.constraints?.minLength !== undefined
+      ? { minLength: field.constraints.minLength }
+      : legacy && field.value === "string"
+        ? { minLength: 2 }
+        : {}),
+    ...(field.constraints?.maxLength !== undefined
+      ? { maxLength: field.constraints.maxLength }
+      : {}),
+    ...(field.constraints?.min !== undefined
+      ? { min: field.constraints.min }
+      : legacy && field.value === "number"
+        ? { min: 0 }
+        : {}),
+    ...(field.constraints?.max !== undefined
+      ? { max: field.constraints.max }
+      : {}),
+    ...(field.constraints?.step !== undefined
+      ? { step: field.constraints.step }
+      : {}),
+    ...(field.constraints?.allowedValues !== undefined
+      ? { allowedValues: field.constraints.allowedValues }
+      : {}),
+    ...(field.constraints?.minItems !== undefined
+      ? { minItems: field.constraints.minItems }
+      : {}),
+    ...(field.constraints?.maxItems !== undefined
+      ? { maxItems: field.constraints.maxItems }
+      : {}),
+    ...(field.constraints?.mustBeTrue !== undefined
+      ? { mustBeTrue: field.constraints.mustBeTrue }
+      : {}),
+  };
+
+  return {
+    key: field.key,
+    value: field.value,
+    required: field.required ?? true,
+    ...(Object.keys(constraints).length ? { constraints } : {}),
+  };
+}
+
 export function hasEndpointSchemaChangedFromEndpoint(
   draftInput: unknown,
   endpointSchema: EndpointSeedField[]
 ): boolean {
   const draft = formDefinitionV1Schema.safeParse(draftInput);
   if (!draft.success || !isEndpointSchemaCompatible(endpointSchema)) return true;
-  const baseline = seedDefinitionFromEndpoint("Endpoint", endpointSchema);
   return (
-    JSON.stringify(compileEndpointSchema(draft.data)) !==
-    JSON.stringify(compileEndpointSchema(baseline))
+    JSON.stringify(compileEndpointSchema(draft.data).map(canonicalEndpointContract)) !==
+    JSON.stringify(endpointSchema.map(canonicalEndpointContract))
   );
 }

@@ -62,8 +62,11 @@ export async function getPublishedForm(publicId: string): Promise<PublishedForm 
   )();
 }
 
-export async function getUserPublishedFormIds(userId: string): Promise<string[]> {
-  const rows = await db
+export async function getUserPublishedFormIds(
+  userId: string,
+  database: typeof db = db
+): Promise<string[]> {
+  const rows = await database
     .select({ publicId: forms.publicId })
     .from(forms)
     .where(and(eq(forms.userId, userId), isNotNull(forms.publishedAt)));

@@ -21,6 +21,7 @@ import {
   AttachedFormExistsError,
   deleteEndpointForUser,
   deleteFormForUser,
+  listAttachableEndpointsForUser,
 } from "../lib/forms/lifecycle";
 import {
   acceptLead,
@@ -45,7 +46,6 @@ suite("Forms PostgreSQL integration through production services", () => {
   const userId = `test-${randomUUID()}`;
   let endpointId = "";
   let formId = "";
-
   beforeAll(async () => {
     userIds.push(userId);
     await database.insert(users).values({
@@ -159,6 +159,30 @@ suite("Forms PostgreSQL integration through production services", () => {
     await expect(
       deleteEndpointForUser({ id: endpointId, userId }, serviceDatabase)
     ).rejects.toBeInstanceOf(AttachedFormExistsError);
+  });
+
+  it("lists only endpoints that do not already have a form", async () => {
+    const [availableEndpoint] = await database
+      .insert(endpoints)
+      .values({
+        userId,
+        name: "Available endpoint",
+        schema: [{ key: "email", value: "email", required: true }],
+        token: "available-token",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning({ id: endpoints.id });
+
+    const attachable = await listAttachableEndpointsForUser(
+      userId,
+      serviceDatabase
+    );
+
+    expect(attachable.map((endpoint) => endpoint.id)).toContain(
+      availableEndpoint.id
+    );
+    expect(attachable.map((endpoint) => endpoint.id)).not.toContain(endpointId);
   });
 
   it("removing a form preserves its endpoint and attributed leads", async () => {

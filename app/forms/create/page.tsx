@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { Breadcrumbs } from "@/components/parts/breadcrumbs";
 import { Header } from "@/components/parts/header";
 import { PageWrapper } from "@/components/parts/page-wrapper";
-import { getEndpoints } from "@/lib/data/endpoints";
+import { getAttachableEndpoints } from "@/lib/data/endpoints";
 import { CreateForm } from "@/components/groups/forms/create-form";
 import { isEndpointSchemaCompatible } from "@/lib/forms/starters";
 
@@ -11,7 +11,7 @@ export default async function CreateFormPage({
 }: {
   searchParams: Promise<{ endpointId?: string }>;
 }) {
-  const endpoints = await getEndpoints();
+  const endpoints = await getAttachableEndpoints();
   if (!endpoints?.data || endpoints.serverError) notFound();
   const { endpointId } = await searchParams;
   const compatibleEndpoints = endpoints.data.filter((endpoint) =>

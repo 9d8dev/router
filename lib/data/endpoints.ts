@@ -18,6 +18,7 @@ import { endpointSchemaForUpdate } from "@/lib/forms/endpoint-schema";
 import {
   AttachedFormExistsError,
   deleteEndpointForUser,
+  listAttachableEndpointsForUser,
 } from "@/lib/forms/lifecycle";
 
 async function invalidateAttachedPublishedForm(
@@ -53,6 +54,10 @@ export const getEndpoints = authenticatedAction.action(
 
     return data;
   }
+);
+
+export const getAttachableEndpoints = authenticatedAction.action(
+  async ({ ctx: { userId } }) => listAttachableEndpointsForUser(userId)
 );
 
 /**

@@ -57,6 +57,12 @@ import {
 } from "@/lib/forms/field-identity";
 import { createLatestSaveQueue } from "@/lib/forms/latest-save-queue";
 import { hasEndpointSchemaChangedFromEndpoint } from "@/lib/forms/starters";
+import {
+  clearRecoverableFormDraft,
+  readRecoverableFormDraft,
+  storeRecoverableFormDraft,
+  type RecoverableFormDraft,
+} from "@/lib/forms/recoverable-draft";
 
 declare global {
   interface Window {
@@ -154,6 +160,8 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
   const [origins, setOrigins] = useState(initialOrigins);
   const [originInput, setOriginInput] = useState("");
   const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [recoverableDraft, setRecoverableDraft] =
+    useState<RecoverableFormDraft | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const revisionRef = useRef(revision);
@@ -178,6 +186,16 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
             revisionRef.current = result.data.revision;
             setRevision(result.data.revision);
             lastSavedRef.current = serialized;
+            if (JSON.stringify(latestRef.current) === serialized) {
+              clearRecoverableFormDraft(window.localStorage, form.id);
+            } else {
+              storeRecoverableFormDraft(window.localStorage, {
+                formId: form.id,
+                baseRevision: result.data.revision,
+                ...latestRef.current,
+                updatedAt: new Date().toISOString(),
+              });
+            }
             setSaveState("saved");
             return true;
           }
@@ -193,9 +211,7 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
     [form.id]
   );
 
-  useEffect(() => {
-    latestRef.current = { name, definition };
-  }, [name, definition]);
+  latestRef.current = { name, definition };
 
   useEffect(() => {
     revisionRef.current = revision;
@@ -209,11 +225,41 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
     []
   );
 
+  const preserveLatestDraft = useCallback(() => {
+    if (!hasUnsavedChanges()) return;
+    storeRecoverableFormDraft(window.localStorage, {
+      formId: form.id,
+      baseRevision: revisionRef.current,
+      ...latestRef.current,
+      updatedAt: new Date().toISOString(),
+    });
+  }, [form.id, hasUnsavedChanges]);
+
+  useEffect(() => {
+    const recovered = readRecoverableFormDraft(window.localStorage, form.id);
+    if (!recovered) return;
+    const serverFingerprint = JSON.stringify({
+      name: form.name,
+      definition: form.draftDefinition,
+    });
+    const recoveredFingerprint = JSON.stringify({
+      name: recovered.name,
+      definition: recovered.definition,
+    });
+    if (serverFingerprint === recoveredFingerprint) {
+      clearRecoverableFormDraft(window.localStorage, form.id);
+      return;
+    }
+    setRecoverableDraft(recovered);
+  }, [form.draftDefinition, form.id, form.name]);
+
   useEffect(() => {
     if (JSON.stringify({ name, definition }) === lastSavedRef.current) return;
+    if (recoverableDraft) return;
+    preserveLatestDraft();
     const timeout = window.setTimeout(() => void persistLatest(), 850);
     return () => window.clearTimeout(timeout);
-  }, [name, definition, persistLatest]);
+  }, [definition, name, persistLatest, preserveLatestDraft, recoverableDraft]);
 
   useEffect(() => {
     const handleDocumentClick = (event: MouseEvent) => {
@@ -258,12 +304,15 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
     };
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       if (!hasUnsavedChanges()) return;
+      preserveLatestDraft();
       void persistLatest();
       event.preventDefault();
       event.returnValue = "";
     };
     const handlePageHide = () => {
-      if (hasUnsavedChanges()) void persistLatest();
+      if (!hasUnsavedChanges()) return;
+      preserveLatestDraft();
+      void persistLatest();
     };
 
     document.addEventListener("click", handleDocumentClick, true);
@@ -273,9 +322,12 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
       document.removeEventListener("click", handleDocumentClick, true);
       window.removeEventListener("beforeunload", handleBeforeUnload);
       window.removeEventListener("pagehide", handlePageHide);
-      if (hasUnsavedChanges()) void persistLatest();
+      if (hasUnsavedChanges()) {
+        preserveLatestDraft();
+        void persistLatest();
+      }
     };
-  }, [hasUnsavedChanges, persistLatest, router]);
+  }, [hasUnsavedChanges, persistLatest, preserveLatestDraft, router]);
 
   useEffect(() => {
     if (!previewRef.current || !window.RouterFormsV1) return;
@@ -382,6 +434,20 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
     router.refresh();
   }
 
+  function restoreRecoveredDraft() {
+    if (!recoverableDraft) return;
+    setName(recoverableDraft.name);
+    setDefinition(recoverableDraft.definition as FormDefinitionV1);
+    setSelectedId(recoverableDraft.definition.fields[0]?.id ?? null);
+    setRecoverableDraft(null);
+    toast.success("Recovered unsaved changes. Saving draft…");
+  }
+
+  function discardRecoveredDraft() {
+    clearRecoverableFormDraft(window.localStorage, form.id);
+    setRecoverableDraft(null);
+  }
+
   async function addOrigin() {
     const result = await addFormOrigin({ formId: form.id, origin: originInput });
     if (!result?.data) return toast.error(result?.serverError || "Could not add that origin.");
@@ -421,6 +487,24 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
   return (
     <div className="grid gap-5">
       <Script src="/embed/v1.js" strategy="afterInteractive" onLoad={() => setRuntimeReady((value) => value + 1)} />
+      {recoverableDraft && (
+        <div className="flex flex-col gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium">Unsaved changes are available</p>
+            <p className="text-xs text-muted-foreground">
+              Restore the draft preserved by this browser, or discard it and keep the saved version.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={discardRecoveredDraft}>
+              Discard
+            </Button>
+            <Button size="sm" onClick={restoreRecoveredDraft}>
+              Restore changes
+            </Button>
+          </div>
+        </div>
+      )}
       <header className="flex flex-col gap-4 border-b pb-5 xl:flex-row xl:items-center xl:justify-between">
         <div className="min-w-0">
           <Input

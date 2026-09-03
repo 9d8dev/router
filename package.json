@@ -16,7 +16,7 @@
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest --run",
     "test:unit:watch": "vitest",
-    "test:db": "vitest --run __tests__/forms-db.integration.test.ts",
+    "test:db": "vitest --run __tests__/forms-db.integration.test.ts __tests__/stripe-webhook-db.integration.test.ts",
     "test:browser": "playwright test",
     "wordpress:check": "integrations/wordpress/check.sh",
     "wordpress:test-matrix": "integrations/wordpress/test-matrix.sh",

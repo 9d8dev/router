@@ -252,6 +252,16 @@ describe("FormDefinitionV1", () => {
         endpointSchema
       )
     ).toBe(true);
+
+    const zipCodeEndpoint = [
+      { key: "postal_code", value: "zip_code" as const },
+    ];
+    expect(
+      hasEndpointSchemaChangedFromEndpoint(
+        seedDefinitionFromEndpoint("Postal code", zipCodeEndpoint),
+        zipCodeEndpoint
+      )
+    ).toBe(true);
   });
 
   it("preserves supported legacy constraints when seeding an attached form", () => {

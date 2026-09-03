@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { endpoints, forms } from "@/lib/db/schema";
 
@@ -16,6 +16,20 @@ export class FormLifecycleNotFoundError extends Error {
     super("Form not found.");
     this.name = "FormLifecycleNotFoundError";
   }
+}
+
+export async function listAttachableEndpointsForUser(
+  userId: string,
+  database: typeof db = db
+) {
+  const rows = await database
+    .select({ endpoint: endpoints })
+    .from(endpoints)
+    .leftJoin(forms, eq(forms.endpointId, endpoints.id))
+    .where(and(eq(endpoints.userId, userId), isNull(forms.id)))
+    .orderBy(desc(endpoints.updatedAt));
+
+  return rows.map(({ endpoint }) => endpoint);
 }
 
 export async function deleteEndpointForUser(
