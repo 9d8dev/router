@@ -1,6 +1,6 @@
 "use server";
 
-import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -78,6 +78,9 @@ export const revokeWordPressConnection = authenticatedAction
   .schema(z.object({ id: z.string() }))
   .action(async ({ parsedInput: { id }, ctx: { userId } }) => {
     await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${userId}, 1381257812))`
+      );
       const [connection] = await tx
         .update(wordpressConnections)
         .set({ revokedAt: new Date(), updatedAt: new Date() })

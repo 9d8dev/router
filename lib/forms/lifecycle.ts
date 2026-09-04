@@ -1,6 +1,10 @@
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { endpoints, forms } from "@/lib/db/schema";
+import {
+  endpoints,
+  formCacheInvalidations,
+  forms,
+} from "@/lib/db/schema";
 
 export class AttachedFormExistsError extends Error {
   constructor() {
@@ -55,10 +59,78 @@ export async function deleteFormForUser(
   input: { id: string; userId: string },
   database: typeof db = db
 ): Promise<{ publicId: string }> {
-  const [deleted] = await database
-    .delete(forms)
-    .where(and(eq(forms.id, input.id), eq(forms.userId, input.userId)))
-    .returning({ publicId: forms.publicId });
-  if (!deleted) throw new FormLifecycleNotFoundError();
-  return deleted;
+  return database.transaction(async (tx) => {
+    const [form] = await tx
+      .select({
+        id: forms.id,
+        publicId: forms.publicId,
+        publishedRevision: forms.publishedRevision,
+      })
+      .from(forms)
+      .where(and(eq(forms.id, input.id), eq(forms.userId, input.userId)))
+      .limit(1);
+    if (!form) throw new FormLifecycleNotFoundError();
+
+    const now = new Date();
+    await tx
+      .insert(formCacheInvalidations)
+      .values({
+        formId: form.id,
+        publicId: form.publicId,
+        publishedRevision: form.publishedRevision,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: formCacheInvalidations.formId,
+        set: {
+          publicId: form.publicId,
+          publishedRevision: form.publishedRevision,
+          updatedAt: now,
+        },
+      });
+
+    await tx
+      .delete(forms)
+      .where(and(eq(forms.id, form.id), eq(forms.userId, input.userId)));
+    return { publicId: form.publicId };
+  });
+}
+
+export async function unpublishFormForUser(
+  input: { id: string; userId: string },
+  database: typeof db = db
+): Promise<{ publicId: string }> {
+  return database.transaction(async (tx) => {
+    const now = new Date();
+    const [updated] = await tx
+      .update(forms)
+      .set({ publishedAt: null, unpublishedAt: now, updatedAt: now })
+      .where(and(eq(forms.id, input.id), eq(forms.userId, input.userId)))
+      .returning({
+        id: forms.id,
+        publicId: forms.publicId,
+        publishedRevision: forms.publishedRevision,
+      });
+    if (!updated) throw new FormLifecycleNotFoundError();
+
+    await tx
+      .insert(formCacheInvalidations)
+      .values({
+        formId: updated.id,
+        publicId: updated.publicId,
+        publishedRevision: updated.publishedRevision,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: formCacheInvalidations.formId,
+        set: {
+          publicId: updated.publicId,
+          publishedRevision: updated.publishedRevision,
+          updatedAt: now,
+        },
+      });
+    return { publicId: updated.publicId };
+  });
 }

@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   endpoints,
   formCacheInvalidations,
+  formOrigins,
   forms,
   leads,
   usagePeriods,
@@ -24,6 +25,7 @@ import {
   deleteEndpointForUser,
   deleteFormForUser,
   listAttachableEndpointsForUser,
+  unpublishFormForUser,
 } from "../lib/forms/lifecycle";
 import {
   acceptLead,
@@ -34,6 +36,7 @@ import {
   createWordPressConnectionForUser,
   WordPressConnectionExistsError,
 } from "../lib/forms/wordpress-connections";
+import { createFormForUser } from "../lib/forms/form-creation";
 
 vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
@@ -241,6 +244,41 @@ suite("Forms PostgreSQL integration through production services", () => {
     ).toHaveLength(1);
   });
 
+  it("links a form and WordPress connection created concurrently", async () => {
+    const concurrentUserId = `test-${randomUUID()}`;
+    userIds.push(concurrentUserId);
+    await database.insert(users).values({
+      id: concurrentUserId,
+      email: `${concurrentUserId}@example.com`,
+    });
+
+    const [createdForm, createdConnection] = await Promise.all([
+      createFormForUser({
+        userId: concurrentUserId,
+        name: "Concurrent form",
+        starterId: "contact",
+      }, serviceDatabase),
+      createWordPressConnectionForUser({
+        userId: concurrentUserId,
+        siteOrigin: "https://concurrent.example.com",
+        siteName: "Concurrent site",
+        token: "router_wp_concurrent",
+      }, serviceDatabase),
+    ]);
+
+    expect(
+      await database
+        .select({ id: formOrigins.id })
+        .from(formOrigins)
+        .where(
+          and(
+            eq(formOrigins.formId, createdForm.id),
+            eq(formOrigins.connectionId, createdConnection.id)
+          )
+        )
+    ).toHaveLength(1);
+  });
+
   it("removing a form preserves its endpoint and attributed leads", async () => {
     const lifecycleUserId = `test-${randomUUID()}`;
     userIds.push(lifecycleUserId);
@@ -271,7 +309,7 @@ suite("Forms PostgreSQL integration through production services", () => {
         publishedAt: new Date(),
         attachedToExistingEndpoint: true,
       })
-      .returning({ id: forms.id });
+      .returning({ id: forms.id, publicId: forms.publicId });
     const [lead] = await database
       .insert(leads)
       .values({
@@ -302,6 +340,65 @@ suite("Forms PostgreSQL integration through production services", () => {
         .from(leads)
         .where(eq(leads.id, lead.id))
     ).toEqual([{ id: lead.id, formId: null }]);
+    expect(
+      await database
+        .select({ publicId: formCacheInvalidations.publicId })
+        .from(formCacheInvalidations)
+        .where(eq(formCacheInvalidations.publicId, form.publicId))
+    ).toEqual([{ publicId: form.publicId }]);
+  });
+
+  it("unpublishes a form and queues cache invalidation atomically", async () => {
+    const unpublishUserId = `test-${randomUUID()}`;
+    userIds.push(unpublishUserId);
+    await database.insert(users).values({
+      id: unpublishUserId,
+      email: `${unpublishUserId}@example.com`,
+    });
+    const [endpoint] = await database
+      .insert(endpoints)
+      .values({
+        userId: unpublishUserId,
+        name: "Unpublish endpoint",
+        schema: [],
+        token: "unpublish-token",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning({ id: endpoints.id });
+    const [form] = await database
+      .insert(forms)
+      .values({
+        userId: unpublishUserId,
+        endpointId: endpoint.id,
+        name: "Unpublish form",
+        draftDefinition: FORM_STARTERS.contact,
+        publishedDefinition: FORM_STARTERS.contact,
+        publishedRevision: 3,
+        publishedAt: new Date(),
+      })
+      .returning({ id: forms.id, publicId: forms.publicId });
+
+    await unpublishFormForUser(
+      { id: form.id, userId: unpublishUserId },
+      serviceDatabase
+    );
+
+    expect(
+      await database
+        .select({ publishedAt: forms.publishedAt })
+        .from(forms)
+        .where(eq(forms.id, form.id))
+    ).toEqual([{ publishedAt: null }]);
+    expect(
+      await database
+        .select({
+          publicId: formCacheInvalidations.publicId,
+          publishedRevision: formCacheInvalidations.publishedRevision,
+        })
+        .from(formCacheInvalidations)
+        .where(eq(formCacheInvalidations.formId, form.id))
+    ).toEqual([{ publicId: form.publicId, publishedRevision: 3 }]);
   });
 
   it("rejects a render session whose published revision changed before acceptance", async () => {

@@ -1,7 +1,6 @@
 "use server";
 
-import { randomBytes } from "node:crypto";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -10,24 +9,11 @@ import {
   endpoints,
   formOrigins,
   forms,
-  wordpressConnections,
 } from "@/lib/db/schema";
 import { ActionError, authenticatedAction } from "./safe-action";
-import {
-  compileEndpointSchema,
-  formDraftDefinitionV1Schema,
-  formDefinitionV1Schema,
-  type FormDefinitionV1,
-} from "@/lib/forms/definition";
-import {
-  getStarter,
-  isEndpointSchemaCompatible,
-  seedDefinitionFromEndpoint,
-  type StarterId,
-} from "@/lib/forms/starters";
+import { formDraftDefinitionV1Schema } from "@/lib/forms/definition";
 import {
   flushPublishedFormInvalidation,
-  invalidatePublishedForm,
 } from "@/lib/forms/cache";
 import { normalizeOrigin } from "@/lib/forms/origins";
 import { captureServerEvent } from "@/lib/analytics/server";
@@ -41,7 +27,12 @@ import {
 import {
   deleteFormForUser,
   FormLifecycleNotFoundError,
+  unpublishFormForUser,
 } from "@/lib/forms/lifecycle";
+import {
+  createFormForUser,
+  FormCreationError,
+} from "@/lib/forms/form-creation";
 
 const starterIdSchema = z.enum([
   "blank",
@@ -124,88 +115,20 @@ export const getFormForEndpoint = authenticatedAction
 export const createForm = authenticatedAction
   .schema(createFormInputSchema)
   .action(async ({ parsedInput, ctx: { userId } }) => {
-    const formId = await db.transaction(async (tx) => {
-      let endpointId = parsedInput.endpointId;
-      let definition: FormDefinitionV1;
-      let attachedToExistingEndpoint = false;
-
-      if (endpointId) {
-        const [endpoint] = await tx
-          .select()
-          .from(endpoints)
-          .where(and(eq(endpoints.id, endpointId), eq(endpoints.userId, userId)))
-          .limit(1);
-        if (!endpoint) throw new ActionError("Endpoint not found.");
-        if (!isEndpointSchemaCompatible(endpoint.schema)) {
-          throw new ActionError(
-            "This endpoint contains fields that cannot be represented by a Router form."
-          );
-        }
-
-        const [existingForm] = await tx
-          .select({ id: forms.id })
-          .from(forms)
-          .where(eq(forms.endpointId, endpointId))
-          .limit(1);
-        if (existingForm) throw new ActionError("This endpoint already has a form.");
-
-        definition = formDefinitionV1Schema.parse(
-          seedDefinitionFromEndpoint(parsedInput.name, endpoint.schema)
-        );
-        attachedToExistingEndpoint = true;
-      } else {
-        definition = formDefinitionV1Schema.parse(
-          getStarter(parsedInput.starterId as StarterId)
-        );
-        const [endpoint] = await tx
-          .insert(endpoints)
-          .values({
-            userId,
-            name: parsedInput.name,
-            schema: compileEndpointSchema(definition),
-            token: randomBytes(32).toString("hex"),
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          })
-          .returning({ id: endpoints.id });
-        endpointId = endpoint.id;
-      }
-
-      const [form] = await tx
-        .insert(forms)
-        .values({
+    let formId: string;
+    try {
+      formId = (
+        await createFormForUser({
+          ...parsedInput,
           userId,
-          endpointId,
-          name: parsedInput.name,
-          draftDefinition: definition,
-          attachedToExistingEndpoint,
         })
-        .returning({ id: forms.id });
-
-      const connections = await tx
-        .select({ id: wordpressConnections.id, siteOrigin: wordpressConnections.siteOrigin })
-        .from(wordpressConnections)
-        .where(
-          and(
-            eq(wordpressConnections.userId, userId),
-            isNull(wordpressConnections.revokedAt)
-          )
-        );
-      if (connections.length) {
-        await tx
-          .insert(formOrigins)
-          .values(
-            connections.map((connection) => ({
-              formId: form.id,
-              connectionId: connection.id,
-              origin: connection.siteOrigin,
-              kind: "wordpress" as const,
-            }))
-          )
-          .onConflictDoNothing();
+      ).id;
+    } catch (error) {
+      if (error instanceof FormCreationError) {
+        throw new ActionError(error.message);
       }
-      return form.id;
-    });
+      throw error;
+    }
 
     await captureServerEvent({
       event: "form_created",
@@ -277,13 +200,20 @@ export const publishForm = authenticatedAction
 export const unpublishForm = authenticatedAction
   .schema(z.object({ id: z.string() }))
   .action(async ({ parsedInput: { id }, ctx: { userId } }) => {
-    const [updated] = await db
-      .update(forms)
-      .set({ publishedAt: null, unpublishedAt: new Date(), updatedAt: new Date() })
-      .where(and(eq(forms.id, id), eq(forms.userId, userId)))
-      .returning({ publicId: forms.publicId });
-    if (!updated) throw new ActionError("Form not found.");
-    invalidatePublishedForm(updated.publicId);
+    let updated;
+    try {
+      updated = await unpublishFormForUser({ id, userId });
+    } catch (error) {
+      if (error instanceof FormLifecycleNotFoundError) {
+        throw new ActionError(error.message);
+      }
+      throw error;
+    }
+    try {
+      await flushPublishedFormInvalidation(updated.publicId);
+    } catch (error) {
+      console.error("Could not invalidate unpublished form cache:", error);
+    }
     revalidatePath(`/forms/${id}`);
     revalidatePath("/forms");
   });
@@ -300,7 +230,11 @@ export const deleteForm = authenticatedAction
       }
       throw error;
     }
-    invalidatePublishedForm(deleted.publicId);
+    try {
+      await flushPublishedFormInvalidation(deleted.publicId);
+    } catch (error) {
+      console.error("Could not invalidate deleted form cache:", error);
+    }
     revalidatePath("/forms");
     revalidatePath("/endpoints");
   });

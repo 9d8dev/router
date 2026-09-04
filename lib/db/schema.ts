@@ -187,10 +187,9 @@ export const forms = pgTable(
 export const formCacheInvalidations = pgTable(
   "formCacheInvalidation",
   {
-    formId: text("formId")
-      .notNull()
-      .primaryKey()
-      .references(() => forms.id, { onDelete: "cascade" }),
+    // This is an outbox tombstone. It must survive form deletion long enough
+    // for every application instance to evict the removed public definition.
+    formId: text("formId").notNull().primaryKey(),
     publicId: text("publicId").notNull(),
     publishedRevision: integer("publishedRevision").notNull(),
     createdAt: timestamp("createdAt", { withTimezone: true })

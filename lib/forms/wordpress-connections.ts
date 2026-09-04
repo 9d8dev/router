@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { formOrigins, forms, wordpressConnections } from "@/lib/db/schema";
 import { hashWordPressToken, tokenPrefix } from "./wordpress-token";
@@ -35,6 +35,9 @@ export async function createWordPressConnectionForUser(input: {
 }, database: typeof db = db) {
   try {
     return await database.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${input.userId}, 1381257812))`
+      );
       const now = new Date();
       const [created] = await tx
         .insert(wordpressConnections)

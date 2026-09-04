@@ -12,6 +12,7 @@ import Link from "next/link";
 import { Progress } from "@/components/ui/progress";
 import { CircleAlert, ArrowUp } from "lucide-react";
 import { Badge } from "../ui/badge";
+import { resolveGraceLeadLimit } from "@/lib/forms/entitlements";
 
 export const Usage = ({
   totalUsage,
@@ -60,7 +61,7 @@ export const Usage = ({
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">
               {used >= totalUsage
-                ? `Grace capacity: ${formatNumber(Math.max(0, Math.round(totalUsage * 1.1) - used))} leads remaining`
+                ? `Grace capacity: ${formatNumber(Math.max(0, resolveGraceLeadLimit(totalUsage) - used))} leads remaining`
                 : `${formatNumber(remaining)} leads remaining`}
             </p>
             <p className="flex items-center space-x-1 text-xs">
