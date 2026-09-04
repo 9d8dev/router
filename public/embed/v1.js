@@ -408,6 +408,7 @@
         }
       });
     } catch (error) {
+      initialized.delete(target);
       target.replaceChildren(element("p", "router-form-v1 router-form-v1__status", error && error.message ? error.message : "This form is unavailable."));
     } finally {
       target.removeAttribute("aria-busy");

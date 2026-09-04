@@ -57,6 +57,16 @@ export function WordPressConnections({ initialConnections }: { initialConnection
     router.refresh();
   }
 
+  async function copyNewToken() {
+    if (!newToken) return;
+    try {
+      await navigator.clipboard.writeText(newToken);
+      toast.success("Token copied.");
+    } catch {
+      toast.error("Could not copy the token. Select it and copy it manually.");
+    }
+  }
+
   return (
     <div className="mx-auto grid max-w-4xl gap-6">
       <section className="rounded-xl border bg-background p-5">
@@ -75,7 +85,7 @@ export function WordPressConnections({ initialConnections }: { initialConnection
         <section className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-5">
           <h2 className="font-medium">Copy this token now</h2>
           <p className="mt-1 text-sm text-muted-foreground">Router stores only its hash, so the full token cannot be shown again.</p>
-          <div className="mt-4 flex gap-2"><Input readOnly value={newToken} className="font-mono text-xs" /><Button variant="outline" size="icon" onClick={() => { void navigator.clipboard.writeText(newToken); toast.success("Token copied."); }}><Clipboard className="h-4 w-4" /></Button></div>
+          <div className="mt-4 flex gap-2"><Input readOnly value={newToken} className="font-mono text-xs" /><Button variant="outline" size="icon" aria-label="Copy WordPress site token" onClick={copyNewToken}><Clipboard className="h-4 w-4" /></Button></div>
           <Button variant="ghost" size="sm" className="mt-2" onClick={() => setNewToken(null)}>I’ve stored it safely</Button>
         </section>
       )}

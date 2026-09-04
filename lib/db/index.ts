@@ -8,6 +8,7 @@ import {
   logs,
   leads,
   forms,
+  formCacheInvalidations,
   formOrigins,
   wordpressConnections,
   usagePeriods,
@@ -29,6 +30,10 @@ export type NewLead = InferInsertModel<typeof leads>;
 
 export type Form = InferSelectModel<typeof forms>;
 export type NewForm = InferInsertModel<typeof forms>;
+
+export type FormCacheInvalidation = InferSelectModel<
+  typeof formCacheInvalidations
+>;
 
 export type FormOrigin = InferSelectModel<typeof formOrigins>;
 export type WordPressConnection = InferSelectModel<typeof wordpressConnections>;

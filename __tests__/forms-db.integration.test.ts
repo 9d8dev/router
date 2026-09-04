@@ -5,10 +5,12 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
 import {
   endpoints,
+  formCacheInvalidations,
   forms,
   leads,
   usagePeriods,
   users,
+  wordpressConnections,
 } from "../lib/db/schema";
 import { FORM_STARTERS } from "../lib/forms/starters";
 import {
@@ -28,6 +30,10 @@ import {
   LeadCapacityError,
   LeadStaleRevisionError,
 } from "../lib/forms/lead-acceptance";
+import {
+  createWordPressConnectionForUser,
+  WordPressConnectionExistsError,
+} from "../lib/forms/wordpress-connections";
 
 vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
@@ -135,6 +141,20 @@ suite("Forms PostgreSQL integration through production services", () => {
     expect(published.publishedRevision).toBe(1);
     expect(storedForm.publishedRevision).toBe(1);
     expect(storedForm.publishedDefinition).toEqual(storedForm.draftDefinition);
+    const pendingInvalidations =
+      await database
+        .select({
+          publicId: formCacheInvalidations.publicId,
+          publishedRevision: formCacheInvalidations.publishedRevision,
+        })
+        .from(formCacheInvalidations)
+        .where(eq(formCacheInvalidations.formId, formId));
+    expect(pendingInvalidations).toEqual([
+      {
+        publicId: published.publicId,
+        publishedRevision: published.publishedRevision,
+      },
+    ]);
     expect(endpoint.schema).toMatchObject([
       { key: "name", value: "string", required: true },
       { key: "email", value: "email", required: true },
@@ -183,6 +203,42 @@ suite("Forms PostgreSQL integration through production services", () => {
       availableEndpoint.id
     );
     expect(attachable.map((endpoint) => endpoint.id)).not.toContain(endpointId);
+  });
+
+  it("allows only one active WordPress connection per user and site", async () => {
+    const connectionUserId = `test-${randomUUID()}`;
+    userIds.push(connectionUserId);
+    await database.insert(users).values({
+      id: connectionUserId,
+      email: `${connectionUserId}@example.com`,
+    });
+
+    const attempts = await Promise.allSettled([
+      createWordPressConnectionForUser({
+        userId: connectionUserId,
+        siteOrigin: "https://example.com",
+        siteName: "Example",
+        token: "router_wp_first",
+      }, serviceDatabase),
+      createWordPressConnectionForUser({
+        userId: connectionUserId,
+        siteOrigin: "https://example.com",
+        siteName: "Example",
+        token: "router_wp_second",
+      }, serviceDatabase),
+    ]);
+
+    expect(attempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(1);
+    const rejection = attempts.find((attempt) => attempt.status === "rejected");
+    expect(rejection).toMatchObject({
+      reason: expect.any(WordPressConnectionExistsError),
+    });
+    expect(
+      await database
+        .select({ id: wordpressConnections.id })
+        .from(wordpressConnections)
+        .where(eq(wordpressConnections.userId, connectionUserId))
+    ).toHaveLength(1);
   });
 
   it("removing a form preserves its endpoint and attributed leads", async () => {
@@ -281,7 +337,7 @@ suite("Forms PostgreSQL integration through production services", () => {
       id: quotaUserId,
       email: `${quotaUserId}@example.com`,
       plan: "enterprise",
-      enterpriseMonthlyLeadLimit: 10,
+      enterpriseMonthlyLeadLimit: 15,
     });
     const [endpoint] = await database
       .insert(endpoints)
@@ -305,7 +361,7 @@ suite("Forms PostgreSQL integration through production services", () => {
       )
     );
 
-    expect(attempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(11);
+    expect(attempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(16);
     expect(
       attempts
         .filter((attempt) => attempt.status === "rejected")
@@ -315,7 +371,7 @@ suite("Forms PostgreSQL integration through production services", () => {
       .select({ leadCount: usagePeriods.leadCount })
       .from(usagePeriods)
       .where(eq(usagePeriods.userId, quotaUserId));
-    expect(usage.leadCount).toBe(11);
+    expect(usage.leadCount).toBe(16);
   });
 
   it("preserves legacy endpoint validation and webhook delivery", async () => {

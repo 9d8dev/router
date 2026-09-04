@@ -27,12 +27,12 @@ export function endpointSchemaForUpdate(
   current: CompatibleEndpointField[],
   requested: CompatibleEndpointField[],
   hasAttachedForm: boolean
-): CompatibleEndpointField[] | null {
+): CompatibleEndpointField[] | null | undefined {
   if (!hasAttachedForm) return requested;
   const currentShape = current.map(({ key, value }) => ({ key, value }));
   const requestedShape = requested.map(({ key, value }) => ({ key, value }));
   return JSON.stringify(currentShape) === JSON.stringify(requestedShape)
-    ? current
+    ? undefined
     : null;
 }
 

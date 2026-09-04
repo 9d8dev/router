@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   pruneFormRateBuckets: vi.fn(),
   retryPendingUsageNotifications: vi.fn(),
+  retryPendingPublishedFormInvalidations: vi.fn(),
 }));
 
 vi.mock("@/lib/forms/rate-limit", () => ({
@@ -13,6 +14,11 @@ vi.mock("@/lib/forms/usage-notifications", () => ({
   retryPendingUsageNotifications: mocks.retryPendingUsageNotifications,
 }));
 
+vi.mock("@/lib/forms/cache", () => ({
+  retryPendingPublishedFormInvalidations:
+    mocks.retryPendingPublishedFormInvalidations,
+}));
+
 import { GET } from "../app/api/cron/forms-maintenance/route";
 
 describe("Forms maintenance route authentication", () => {
@@ -20,6 +26,7 @@ describe("Forms maintenance route authentication", () => {
     delete process.env.CRON_SECRET;
     mocks.pruneFormRateBuckets.mockReset();
     mocks.retryPendingUsageNotifications.mockReset();
+    mocks.retryPendingPublishedFormInvalidations.mockReset();
   });
 
   afterEach(() => {
@@ -36,6 +43,7 @@ describe("Forms maintenance route authentication", () => {
     expect(response.status).toBe(503);
     expect(mocks.pruneFormRateBuckets).not.toHaveBeenCalled();
     expect(mocks.retryPendingUsageNotifications).not.toHaveBeenCalled();
+    expect(mocks.retryPendingPublishedFormInvalidations).not.toHaveBeenCalled();
   });
 
   it("runs maintenance only with the configured bearer secret", async () => {
@@ -44,6 +52,10 @@ describe("Forms maintenance route authentication", () => {
     mocks.retryPendingUsageNotifications.mockResolvedValue({
       attempted: 2,
       delivered: 1,
+    });
+    mocks.retryPendingPublishedFormInvalidations.mockResolvedValue({
+      attempted: 3,
+      invalidated: 3,
     });
 
     const response = await GET(
@@ -57,6 +69,7 @@ describe("Forms maintenance route authentication", () => {
       success: true,
       prunedRateBuckets: 4,
       usageNotifications: { attempted: 2, delivered: 1 },
+      cacheInvalidations: { attempted: 3, invalidated: 3 },
     });
   });
 });

@@ -15,6 +15,7 @@ import { formDefinitionV1Schema, validateFormValues } from "./definition";
 import { validateEndpointValues } from "./endpoint-schema";
 import {
   getCapacityState,
+  resolveGraceLeadLimit,
   resolveMonthlyLeadLimit,
   type CapacityState,
   type EnterpriseLeadContract,
@@ -271,7 +272,7 @@ export async function acceptLead(
     const graceLimit =
       monthlyLeadLimit === null
         ? null
-        : Math.round(monthlyLeadLimit * 1.1);
+        : resolveGraceLeadLimit(monthlyLeadLimit);
     if (graceLimit !== null && usage.leadCount > graceLimit) {
       throw new LeadCapacityError(
         getCapacityState(plan, usage.leadCount - 1, enterpriseContract)

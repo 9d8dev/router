@@ -124,6 +124,38 @@ describe("embed v1 runtime", () => {
     expect(document.querySelectorAll("#router-forms-v1-styles")).toHaveLength(1);
   });
 
+  it("can retry a live mount after a transient loading failure", async () => {
+    const target = document.createElement("div");
+    target.setAttribute("data-router-form", "retry-form");
+    document.body.appendChild(target);
+    const runtime = (window as unknown as { RouterFormsV1: Runtime }).RouterFormsV1;
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Network unavailable")));
+
+    await runtime.mount(target);
+    expect(target.textContent).toContain("Network unavailable");
+
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL) => {
+      if (String(url).endsWith("/render-session")) {
+        return new Response(
+          JSON.stringify({ submitToken: "token", revision: 1, expiresIn: 3600 }),
+          { status: 200 }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          publicId: "retry-form",
+          revision: 1,
+          definition,
+          attribution: { visible: false },
+        }),
+        { status: 200 }
+      );
+    }));
+
+    await runtime.mount(target);
+    expect(target.querySelector("form")).not.toBeNull();
+  });
+
   it("keeps a legitimate website field separate from the honeypot", async () => {
     const { target, submissions } = await mountLiveForm({
       ...definition,

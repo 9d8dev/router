@@ -25,7 +25,10 @@ import {
   seedDefinitionFromEndpoint,
   type StarterId,
 } from "@/lib/forms/starters";
-import { invalidatePublishedForm } from "@/lib/forms/cache";
+import {
+  flushPublishedFormInvalidation,
+  invalidatePublishedForm,
+} from "@/lib/forms/cache";
 import { normalizeOrigin } from "@/lib/forms/origins";
 import { captureServerEvent } from "@/lib/analytics/server";
 import {
@@ -253,7 +256,11 @@ export const publishForm = authenticatedAction
       throw error;
     }
 
-    invalidatePublishedForm(published.publicId);
+    try {
+      await flushPublishedFormInvalidation(published.publicId);
+    } catch (error) {
+      console.error("Could not invalidate published form cache:", error);
+    }
     await captureServerEvent({
       event: "form_published",
       distinctId: userId,

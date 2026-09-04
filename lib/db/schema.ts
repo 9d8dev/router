@@ -15,6 +15,7 @@ import type { AdapterAccount } from "@auth/core/adapters";
 import { init } from "@paralleldrive/cuid2";
 import type { FormDefinitionV1 } from "@/lib/forms/definition";
 import type { CompatibleEndpointField } from "@/lib/forms/endpoint-schema";
+import { sql } from "drizzle-orm";
 
 const createId = init({
   length: 8,
@@ -183,6 +184,29 @@ export const forms = pgTable(
   })
 );
 
+export const formCacheInvalidations = pgTable(
+  "formCacheInvalidation",
+  {
+    formId: text("formId")
+      .notNull()
+      .primaryKey()
+      .references(() => forms.id, { onDelete: "cascade" }),
+    publicId: text("publicId").notNull(),
+    publishedRevision: integer("publishedRevision").notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (invalidation) => ({
+    publicIdIndex: index("form_cache_invalidation_public_id_idx").on(
+      invalidation.publicId
+    ),
+  })
+);
+
 export const formOriginKindEnum = pgEnum("formOriginKind", [
   "embed",
   "wordpress",
@@ -215,10 +239,12 @@ export const wordpressConnections = pgTable(
     tokenHashUnique: uniqueIndex("wordpress_connection_token_hash_unique").on(
       connection.tokenHash
     ),
-    ownerSiteIndex: index("wordpress_connection_owner_site_idx").on(
+    activeOwnerSiteUnique: uniqueIndex(
+      "wordpress_connection_active_owner_site_unique"
+    ).on(
       connection.userId,
       connection.siteOrigin
-    ),
+    ).where(sql`${connection.revokedAt} IS NULL`),
   })
 );
 

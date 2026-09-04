@@ -58,7 +58,7 @@ describe("endpoint editor validation", () => {
         [{ key: "email", value: "email" }],
         true
       )
-    ).toBe(current);
+    ).toBeUndefined();
     expect(
       endpointSchemaForUpdate(
         current,

@@ -195,7 +195,7 @@ export const updateEndpoint = authenticatedAction
         parsedInput.schema,
         Boolean(current.attachedFormId)
       );
-      if (!nextSchema) {
+      if (nextSchema === null) {
         throw new ActionError(
           "Edit fields in the attached form builder, then publish the form to update this endpoint schema."
         );
@@ -205,7 +205,7 @@ export const updateEndpoint = authenticatedAction
         .update(endpoints)
         .set({
           name: parsedInput.name,
-          schema: nextSchema,
+          ...(nextSchema === undefined ? {} : { schema: nextSchema }),
           // TODO: add this to form
           // enabled: parsedInput.enabled,
           formEnabled: parsedInput.formEnabled,

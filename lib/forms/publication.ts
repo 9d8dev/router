@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { endpoints, forms } from "@/lib/db/schema";
+import { endpoints, formCacheInvalidations, forms } from "@/lib/db/schema";
 import {
   compileEndpointSchema,
   formDraftDefinitionV1Schema,
@@ -117,6 +117,23 @@ export async function publishFormForUser(input: {
         "This form changed while it was publishing. Reload and publish the latest draft."
       );
     }
+    await tx
+      .insert(formCacheInvalidations)
+      .values({
+        formId: form.id,
+        publicId: updated.publicId,
+        publishedRevision: updated.publishedRevision,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: formCacheInvalidations.formId,
+        set: {
+          publicId: updated.publicId,
+          publishedRevision: updated.publishedRevision,
+          updatedAt: now,
+        },
+      });
     return updated;
   });
 }

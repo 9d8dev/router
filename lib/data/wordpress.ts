@@ -17,6 +17,10 @@ import {
   tokenPrefix,
 } from "@/lib/forms/wordpress-token";
 import { captureServerEvent } from "@/lib/analytics/server";
+import {
+  createWordPressConnectionForUser,
+  WordPressConnectionExistsError,
+} from "@/lib/forms/wordpress-connections";
 
 export const getWordPressConnections = authenticatedAction.action(
   async ({ ctx: { userId } }) =>
@@ -44,55 +48,21 @@ export const createWordPressConnection = authenticatedAction
   )
   .action(async ({ parsedInput, ctx: { userId } }) => {
     const siteOrigin = normalizeOrigin(parsedInput.siteUrl);
-    const [existingConnection] = await db
-      .select({ id: wordpressConnections.id })
-      .from(wordpressConnections)
-      .where(
-        and(
-          eq(wordpressConnections.userId, userId),
-          eq(wordpressConnections.siteOrigin, siteOrigin),
-          isNull(wordpressConnections.revokedAt)
-        )
-      )
-      .limit(1);
-    if (existingConnection) {
-      throw new ActionError("This WordPress site already has an active connection.");
-    }
     const token = createWordPressToken();
-    const now = new Date();
-    const connection = await db.transaction(async (tx) => {
-      const [created] = await tx
-        .insert(wordpressConnections)
-        .values({
-          userId,
-          siteOrigin,
-          siteName: parsedInput.siteName || null,
-          tokenPrefix: tokenPrefix(token),
-          tokenHash: hashWordPressToken(token),
-          createdAt: now,
-          updatedAt: now,
-        })
-        .returning({ id: wordpressConnections.id });
-
-      const userForms = await tx
-        .select({ id: forms.id })
-        .from(forms)
-        .where(eq(forms.userId, userId));
-      if (userForms.length) {
-        await tx
-          .insert(formOrigins)
-          .values(
-            userForms.map((form) => ({
-              formId: form.id,
-              connectionId: created.id,
-              origin: siteOrigin,
-              kind: "wordpress" as const,
-            }))
-          )
-          .onConflictDoNothing();
+    let connection;
+    try {
+      connection = await createWordPressConnectionForUser({
+        userId,
+        siteOrigin,
+        siteName: parsedInput.siteName || null,
+        token,
+      });
+    } catch (error) {
+      if (error instanceof WordPressConnectionExistsError) {
+        throw new ActionError(error.message);
       }
-      return created;
-    });
+      throw error;
+    }
 
     await captureServerEvent({
       event: "form_wordpress_connected",

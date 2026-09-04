@@ -3,6 +3,7 @@ import {
   ENTITLEMENTS,
   getCapacityState,
   getEntitlement,
+  resolveGraceLeadLimit,
   resolveMonthlyLeadLimit,
 } from "../lib/forms/entitlements";
 
@@ -37,6 +38,13 @@ describe("Forms entitlements", () => {
     expect(getCapacityState("free", 100)).toMatchObject({ state: "grace", accepts: true });
     expect(getCapacityState("free", 109)).toMatchObject({ state: "grace", accepts: true });
     expect(getCapacityState("free", 110)).toMatchObject({ state: "paused", accepts: false });
+  });
+
+  it("never rounds the grace allowance above 110 percent", () => {
+    expect(resolveGraceLeadLimit(15)).toBe(16);
+    expect(
+      getCapacityState("enterprise", 16, { monthlyLeadLimit: 15 })
+    ).toMatchObject({ state: "paused", accepts: false, graceLimit: 16 });
   });
 
   it("requires an explicit Enterprise contract allowance", () => {

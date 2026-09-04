@@ -76,6 +76,10 @@ export function resolveMonthlyLeadLimit(
   return 0;
 }
 
+export function resolveGraceLeadLimit(limit: number): number {
+  return Math.floor(limit * 1.1);
+}
+
 export function getCapacityState(
   plan: RouterPlan,
   used: number,
@@ -86,7 +90,7 @@ export function getCapacityState(
     return { state: "ok", accepts: true, used, limit: null, graceLimit: null };
   }
 
-  const graceLimit = Math.round(limit * 1.1);
+  const graceLimit = resolveGraceLeadLimit(limit);
   if (used >= graceLimit) {
     return { state: "paused", accepts: false, used, limit, graceLimit };
   }
