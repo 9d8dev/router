@@ -102,6 +102,7 @@ export const getUsageForUser = authenticatedAction.action(
         stripeCurrentPeriodEnd: users.stripeCurrentPeriodEnd,
         stripeCancelAtPeriodEnd: users.stripeCancelAtPeriodEnd,
         stripeSubscriptionStatus: users.stripeSubscriptionStatus,
+        stripeBillingInterval: users.stripeBillingInterval,
         enterpriseMonthlyLeadLimit: users.enterpriseMonthlyLeadLimit,
         enterpriseUnlimitedLeads: users.enterpriseUnlimitedLeads,
       })

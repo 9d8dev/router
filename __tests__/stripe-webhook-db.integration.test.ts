@@ -177,10 +177,20 @@ suite("Stripe webhook PostgreSQL transitions", () => {
     expect(response.status).toBe(200);
     expect(
       await database
-        .select({ plan: users.plan, subscriptionId: users.stripeSubscriptionId })
+        .select({
+          plan: users.plan,
+          subscriptionId: users.stripeSubscriptionId,
+          billingInterval: users.stripeBillingInterval,
+        })
         .from(users)
         .where(eq(users.id, userId))
-    ).toEqual([{ plan: "pro", subscriptionId: "sub_checkout" }]);
+    ).toEqual([
+      {
+        plan: "pro",
+        subscriptionId: "sub_checkout",
+        billingInterval: "monthly",
+      },
+    ]);
     expect(cacheMocks.revalidateTag).toHaveBeenCalledWith(
       `published-form:${publishedForm.publicId}`
     );

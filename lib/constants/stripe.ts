@@ -74,3 +74,14 @@ export function planForNewPrice(priceId: string): PurchasablePlan | null {
   }
   return null;
 }
+
+export function billingIntervalForNewPrice(
+  priceId: string
+): BillingInterval | null {
+  for (const plan of ["pro", "business"] as const) {
+    for (const interval of ["monthly", "annual"] as const) {
+      if (configuredPriceId(plan, interval) === priceId) return interval;
+    }
+  }
+  return null;
+}

@@ -16,7 +16,15 @@ if (!$registry->is_registered("router/forms")) {
 $shortcode = do_shortcode("[router_form id=browser-form]");
 $block = render_block(array(
     "blockName" => "router/forms",
-    "attrs" => array("formId" => "browser-form"),
+    "attrs" => array(
+        "formId" => "browser-form",
+        "align" => "wide",
+        "style" => array(
+            "spacing" => array(
+                "padding" => array("top" => "12px"),
+            ),
+        ),
+    ),
     "innerBlocks" => array(),
     "innerHTML" => "",
     "innerContent" => array(),
@@ -24,6 +32,10 @@ $block = render_block(array(
 $combined = $shortcode . $block;
 if (substr_count($combined, "data-router-form=\"browser-form\"") !== 2) {
     fwrite(STDERR, "Block and shortcode did not produce matching mount points.\n");
+    exit(1);
+}
+if (strpos($block, "wp-block-router-forms") === false || strpos($block, "alignwide") === false) {
+    fwrite(STDERR, "Dynamic block did not apply WordPress block wrapper classes.\n");
     exit(1);
 }
 update_option("router_forms_site_token", "secret-test-token");

@@ -255,6 +255,7 @@ export async function handleStripeWebhook(
           stripeSubscriptionId: null,
           stripeSubscriptionStatus: null,
           stripeSubscriptionCreatedAt: null,
+          stripeBillingInterval: null,
           stripeCurrentPeriodEnd: null,
           stripeCancelAtPeriodEnd: false,
           legacyPriceMigrationRequired: false,

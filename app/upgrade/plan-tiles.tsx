@@ -18,6 +18,7 @@ type Usage = {
   stripeCurrentPeriodEnd: Date | null;
   stripeCancelAtPeriodEnd: boolean;
   stripeSubscriptionStatus: string | null;
+  stripeBillingInterval: "monthly" | "annual" | null;
 };
 
 const plans = [
@@ -88,7 +89,12 @@ export function PlanTiles({ usage }: { usage: Usage }) {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-4">
         {plans.map((plan) => {
           const entitlement = ENTITLEMENTS[plan.id];
-          const isCurrent = usage.plan === plan.id && !usage.legacyPriceMigrationRequired;
+          const isCurrent =
+            usage.plan === plan.id &&
+            !usage.legacyPriceMigrationRequired &&
+            (plan.id === "free" ||
+              plan.id === "enterprise" ||
+              usage.stripeBillingInterval === interval);
           const price = interval === "annual" ? entitlement.annualPrice : entitlement.monthlyPrice;
           const isFree = plan.id === "free";
           return (

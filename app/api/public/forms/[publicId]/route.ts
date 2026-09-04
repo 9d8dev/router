@@ -35,7 +35,7 @@ export async function GET(
   headers.set("ETag", etag);
   headers.set(
     "Cache-Control",
-    "public, max-age=0, s-maxage=3600, stale-while-revalidate=86400"
+    "public, max-age=0, must-revalidate"
   );
 
   if (request.headers.get("if-none-match") === etag) {

@@ -1,6 +1,8 @@
 import {
   LEGACY_STRIPE_PRICE_TO_PLAN,
+  billingIntervalForNewPrice,
   planForNewPrice,
+  type BillingInterval,
   type PurchasablePlan,
 } from "../constants/stripe";
 import type { RouterPlan } from "./entitlements";
@@ -73,6 +75,7 @@ export function subscriptionEntitlementState(
   stripeSubscriptionId: string;
   stripeSubscriptionStatus: string;
   stripeSubscriptionCreatedAt: Date;
+  stripeBillingInterval: BillingInterval | null;
   stripeCurrentPeriodEnd: Date;
   stripeCancelAtPeriodEnd: boolean;
   legacyPriceMigrationRequired: boolean;
@@ -90,6 +93,7 @@ export function subscriptionEntitlementState(
     stripeSubscriptionId: subscription.subscriptionId,
     stripeSubscriptionStatus: subscription.status,
     stripeSubscriptionCreatedAt: new Date(subscription.createdAt * 1_000),
+    stripeBillingInterval: billingIntervalForNewPrice(subscription.priceId),
     stripeCurrentPeriodEnd: new Date(subscription.currentPeriodEnd * 1_000),
     stripeCancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
     legacyPriceMigrationRequired: Boolean(legacyPlan),
@@ -109,6 +113,7 @@ export function endedSubscriptionState(
     stripeSubscriptionId: subscriptionId,
     stripeSubscriptionStatus: status,
     stripeSubscriptionCreatedAt: new Date(subscriptionCreatedAt * 1_000),
+    stripeBillingInterval: null,
     stripeCurrentPeriodEnd: null,
     stripeCancelAtPeriodEnd: false,
     legacyPriceMigrationRequired: false,

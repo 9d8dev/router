@@ -435,7 +435,9 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
   }
 
   function restoreRecoveredDraft() {
-    if (!recoverableDraft) return;
+    if (!recoverableDraft || recoverableDraft.baseRevision !== form.draftRevision) {
+      return;
+    }
     setName(recoverableDraft.name);
     setDefinition(recoverableDraft.definition as FormDefinitionV1);
     setSelectedId(recoverableDraft.definition.fields[0]?.id ?? null);
@@ -446,6 +448,20 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
   function discardRecoveredDraft() {
     clearRecoverableFormDraft(window.localStorage, form.id);
     setRecoverableDraft(null);
+  }
+
+  function downloadRecoveredDraft() {
+    if (!recoverableDraft) return;
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(recoverableDraft.definition, null, 2)], {
+        type: "application/json",
+      })
+    );
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${normalizeSubmissionKey(recoverableDraft.name)}.recovered.router-form.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
   }
 
   async function addOrigin() {
@@ -492,16 +508,24 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
           <div>
             <p className="text-sm font-medium">Unsaved changes are available</p>
             <p className="text-xs text-muted-foreground">
-              Restore the draft preserved by this browser, or discard it and keep the saved version.
+              {recoverableDraft.baseRevision === form.draftRevision
+                ? "Restore the draft preserved by this browser, or discard it and keep the saved version."
+                : "A newer draft has already been saved. Download this recovered copy for manual review, or discard it and keep the newer version."}
             </p>
           </div>
           <div className="flex gap-2">
             <Button size="sm" variant="outline" onClick={discardRecoveredDraft}>
               Discard
             </Button>
-            <Button size="sm" onClick={restoreRecoveredDraft}>
-              Restore changes
-            </Button>
+            {recoverableDraft.baseRevision === form.draftRevision ? (
+              <Button size="sm" onClick={restoreRecoveredDraft}>
+                Restore changes
+              </Button>
+            ) : (
+              <Button size="sm" onClick={downloadRecoveredDraft}>
+                Download recovered copy
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -1035,21 +1059,25 @@ function PlacementSettings(props: {
   addOrigin: () => void;
   onRemoveOrigin: (origin: Origin) => void;
 }) {
-  function copy(text: string, event: "hosted" | "embed") {
-    void navigator.clipboard.writeText(text);
-    posthog.capture(event === "embed" ? "form_placement_copied" : "form_hosted_url_copied", {
-      form_id: props.formId,
-      placement: event,
-    });
-    toast.success("Copied.");
+  async function copy(text: string, event: "hosted" | "embed") {
+    try {
+      await navigator.clipboard.writeText(text);
+      posthog.capture(event === "embed" ? "form_placement_copied" : "form_hosted_url_copied", {
+        form_id: props.formId,
+        placement: event,
+      });
+      toast.success("Copied.");
+    } catch {
+      toast.error("Could not copy. Select the text and copy it manually.");
+    }
   }
 
   return (
     <section className="rounded-xl border bg-background p-5">
       <div className="flex items-center justify-between"><div><h2 className="text-sm font-medium">Placements</h2><p className="text-xs text-muted-foreground">Only explicit publishing changes these live surfaces.</p></div>{!props.published && <Badge variant="secondary">Publish first</Badge>}</div>
       <div className="mt-5 grid gap-5 lg:grid-cols-2">
-        <div className="grid gap-2"><Label>Hosted page</Label><div className="flex gap-2"><Input readOnly value={`https://forms.router.so/${props.publicId}`} /><Button variant="outline" size="icon" onClick={() => copy(`https://forms.router.so/${props.publicId}`, "hosted")}><Clipboard className="h-4 w-4" /></Button></div></div>
-        <div className="grid gap-2"><Label>Generic embed</Label><div className="flex gap-2"><Textarea readOnly rows={3} value={props.embedCode} className="font-mono text-xs" /><Button variant="outline" size="icon" onClick={() => copy(props.embedCode, "embed")}><Clipboard className="h-4 w-4" /></Button></div></div>
+        <div className="grid gap-2"><Label>Hosted page</Label><div className="flex gap-2"><Input readOnly value={`https://forms.router.so/${props.publicId}`} /><Button variant="outline" size="icon" aria-label="Copy hosted form URL" onClick={() => void copy(`https://forms.router.so/${props.publicId}`, "hosted")}><Clipboard className="h-4 w-4" /></Button></div></div>
+        <div className="grid gap-2"><Label>Generic embed</Label><div className="flex gap-2"><Textarea readOnly rows={3} value={props.embedCode} className="font-mono text-xs" /><Button variant="outline" size="icon" aria-label="Copy generic embed code" onClick={() => void copy(props.embedCode, "embed")}><Clipboard className="h-4 w-4" /></Button></div></div>
       </div>
       <div className="mt-5 border-t pt-5">
         <Label>Approved generic-embed origins</Label>

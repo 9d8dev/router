@@ -98,6 +98,7 @@ describe("Stripe entitlement transitions", () => {
     expect(subscriptionEntitlementState(subscription("price_new_pro"))).toMatchObject({
       plan: "pro",
       legacyPriceMigrationRequired: false,
+      stripeBillingInterval: "monthly",
       stripeSubscriptionStatus: "active",
     });
   });
@@ -141,6 +142,7 @@ describe("Stripe entitlement transitions", () => {
       stripeSubscriptionId: "sub_router",
       stripeSubscriptionStatus: "canceled",
       stripeSubscriptionCreatedAt: new Date(1_700_000_000 * 1_000),
+      stripeBillingInterval: null,
       stripeCurrentPeriodEnd: null,
       stripeCancelAtPeriodEnd: false,
       legacyPriceMigrationRequired: false,

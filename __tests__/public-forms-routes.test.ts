@@ -61,6 +61,7 @@ vi.mock("@/lib/forms/feature-flags", () => ({
 }));
 
 import {
+  GET as getPublicForm,
   OPTIONS as formOptions,
 } from "../app/api/public/forms/[publicId]/route";
 import {
@@ -118,7 +119,13 @@ describe("public form route origin enforcement", () => {
     });
     mocks.enforceFormRateLimit.mockReset();
     mocks.getPublishedForm.mockReset();
-    mocks.getPublishedForm.mockResolvedValue({ id: "form_1", revision: 7 });
+    mocks.getPublishedForm.mockResolvedValue({
+      id: "form_1",
+      publicId,
+      revision: 7,
+      definition: { title: "Published form" },
+      showAttribution: false,
+    });
     mocks.isApprovedFormOrigin.mockReset();
     mocks.isApprovedFormOrigin.mockResolvedValue(true);
     mocks.publicFormOptionsResponse.mockReset();
@@ -127,6 +134,18 @@ describe("public form route origin enforcement", () => {
         status: 204,
         headers: { "Access-Control-Allow-Origin": "https://site.example" },
       })
+    );
+  });
+
+  it("revalidates the public definition instead of independently caching a stale route response", async () => {
+    const response = await getPublicForm(
+      new Request(`https://forms.router.so/api/public/forms/${publicId}`),
+      params
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe(
+      "public, max-age=0, must-revalidate"
     );
   });
 

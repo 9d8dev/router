@@ -49,6 +49,9 @@ export const users = pgTable("user", {
   stripeSubscriptionCreatedAt: timestamp("stripeSubscriptionCreatedAt", {
     withTimezone: true,
   }),
+  stripeBillingInterval: text("stripeBillingInterval").$type<
+    "monthly" | "annual"
+  >(),
   stripeCurrentPeriodEnd: timestamp("stripeCurrentPeriodEnd", {
     withTimezone: true,
   }),
