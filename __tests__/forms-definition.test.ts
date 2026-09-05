@@ -52,6 +52,29 @@ const contactForm = {
 };
 
 describe("FormDefinitionV1", () => {
+  it.each(["constructor", "toString", "hasOwnProperty"])(
+    "returns field errors for the prototype-named key %s on both submission paths",
+    (key) => {
+      const definition = {
+        ...contactForm,
+        fields: [{ ...contactForm.fields[1], key }],
+      };
+      const values = { [key]: "invalid-email" };
+      for (const result of [
+        validateFormValues(definition, values),
+        validateEndpointValues(compileEndpointSchema(definition), values),
+      ]) {
+        expect(result.success).toBe(false);
+        if (result.success) throw new Error("Expected a field error");
+        expect(Object.hasOwn(result.errors, key)).toBe(true);
+        expect(result.errors[key]).toEqual([expect.any(String)]);
+        expect(JSON.parse(JSON.stringify(result.errors))).toEqual({
+          [key]: [expect.any(String)],
+        });
+      }
+    }
+  );
+
   it("parses a complete versioned definition", () => {
     expect(formDefinitionV1Schema.parse(contactForm)).toEqual(contactForm);
   });

@@ -147,7 +147,7 @@ export function validateEndpointValues(
 
   if (result.success) return { success: true, data: result.data };
 
-  const errors: Record<string, string[]> = {};
+  const errors: Record<string, string[]> = Object.create(null);
   for (const issue of result.error.issues) {
     if (issue.code === z.ZodIssueCode.unrecognized_keys) {
       for (const key of issue.keys) errors[key] = ["Unknown field."];
