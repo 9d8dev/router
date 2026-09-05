@@ -24,6 +24,17 @@ type GeneralSchema = {
   key: string;
   value: ValidationType;
   required?: boolean;
+  constraints?: {
+    minLength?: number;
+    maxLength?: number;
+    min?: number | string;
+    max?: number | string;
+    step?: number;
+    allowedValues?: string[];
+    minItems?: number;
+    maxItems?: number;
+    mustBeTrue?: boolean;
+  };
 };
 
 /**
@@ -40,7 +51,8 @@ type ValidationType =
   | "date"
   | "boolean"
   | "url"
-  | "zip_code";
+  | "zip_code"
+  | "string_array";
 
 /**
  * Row type for the main dashboard data on /dashboard route
@@ -89,6 +101,9 @@ type LeadRow = {
   updatedAt: Date;
   endpointId: string;
   endpoint?: string;
+  formId: string | null;
+  formRevision: number | null;
+  placement: "headless" | "legacy_html" | "hosted" | "embed" | "wordpress" | null;
 };
 
 /**

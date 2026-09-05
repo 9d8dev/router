@@ -1,5 +1,80 @@
 import { expect, test, describe } from "vitest";
 import * as validation from "../lib/validation";
+import { updateEndpointFormSchema } from "../lib/data/validations";
+import { endpointSchemaForUpdate } from "../lib/forms/endpoint-schema";
+
+describe("endpoint editor validation", () => {
+  test("preserves form-compiled required and constraint metadata", () => {
+    const parsed = updateEndpointFormSchema.parse({
+      id: "endpoint_1",
+      name: "Contact",
+      schema: [
+        {
+          key: "email",
+          value: "email",
+          required: false,
+          constraints: { minLength: 5, maxLength: 120 },
+        },
+        {
+          key: "consent",
+          value: "boolean",
+          required: true,
+          constraints: { mustBeTrue: true },
+        },
+      ],
+      formEnabled: false,
+      webhookEnabled: false,
+    });
+
+    expect(parsed.schema).toEqual([
+      {
+        key: "email",
+        value: "email",
+        required: false,
+        constraints: { minLength: 5, maxLength: 120 },
+      },
+      {
+        key: "consent",
+        value: "boolean",
+        required: true,
+        constraints: { mustBeTrue: true },
+      },
+    ]);
+  });
+
+  test("keeps the compiled contract when attached endpoint settings are saved", () => {
+    const current = [
+      {
+        key: "email",
+        value: "email" as const,
+        required: false,
+        constraints: { maxLength: 120 },
+      },
+    ];
+
+    expect(
+      endpointSchemaForUpdate(
+        current,
+        [{ key: "email", value: "email" }],
+        true
+      )
+    ).toBeUndefined();
+    expect(
+      endpointSchemaForUpdate(
+        current,
+        [{ key: "renamed", value: "email" }],
+        true
+      )
+    ).toBeNull();
+    expect(
+      endpointSchemaForUpdate(
+        current,
+        [{ key: "renamed", value: "email" }],
+        false
+      )
+    ).toEqual([{ key: "renamed", value: "email" }]);
+  });
+});
 
 describe("convertToCorrectTypes", () => {
   test('should convert "true" and "false" strings to boolean values', () => {

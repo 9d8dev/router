@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schemas.wp.org/trunk/wp-env.json",
+  "core": null,
+  "phpVersion": "7.4",
+  "plugins": [
+    "./integrations/wordpress/router-forms",
+    "./integrations/wordpress/test-fixtures/router-forms-test-api"
+  ],
+  "testsEnvironment": false,
+  "port": 8888
+}

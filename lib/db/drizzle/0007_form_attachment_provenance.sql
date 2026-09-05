@@ -1,0 +1,1 @@
+ALTER TABLE "form" ADD COLUMN "attachedToExistingEndpoint" boolean DEFAULT false NOT NULL;

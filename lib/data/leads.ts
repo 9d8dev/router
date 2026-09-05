@@ -1,11 +1,16 @@
 "use server";
 
-import { leads, endpoints } from "../db/schema";
-import { eq, desc, and } from "drizzle-orm";
+import { leads, endpoints, forms } from "../db/schema";
+import { eq, desc, and, lt, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "../db";
-import { authenticatedAction } from "./safe-action";
+import { ActionError, authenticatedAction } from "./safe-action";
 import { z } from "zod";
+import {
+  decodeLeadCursor,
+  encodeLeadCursor,
+  FORM_LEADS_PAGE_SIZE,
+} from "../forms/lead-pagination";
 
 /**
  * Creates a new lead in the database
@@ -54,6 +59,9 @@ export const getLeads = authenticatedAction.action(
       updatedAt: lead.lead.updatedAt,
       endpointId: lead.endpoint?.id as string,
       endpoint: lead.endpoint?.name || undefined,
+      formId: lead.lead.formId,
+      formRevision: lead.lead.formRevision,
+      placement: lead.lead.placement,
     }));
 
     return data;
@@ -114,6 +122,57 @@ export const getLeadsByEndpoint = authenticatedAction
       .where(eq(leads.endpointId, id));
 
     return { leadData, schema: endpoint[0].schema };
+  });
+
+export const getLeadsByForm = authenticatedAction
+  .schema(z.object({ id: z.string(), cursor: z.string().max(512).optional() }))
+  .action(async ({ parsedInput: { id, cursor: encodedCursor }, ctx: { userId } }) => {
+    const [ownedForm] = await db
+      .select({ id: forms.id, endpointId: forms.endpointId })
+      .from(forms)
+      .where(and(eq(forms.id, id), eq(forms.userId, userId)))
+      .limit(1);
+    if (!ownedForm) throw new Error("You are not authorized for this action.");
+
+    let cursor;
+    try {
+      cursor = encodedCursor ? decodeLeadCursor(encodedCursor) : null;
+    } catch (error) {
+      throw new ActionError(
+        error instanceof Error ? error.message : "Invalid lead cursor."
+      );
+    }
+
+    const rows = await db
+      .select()
+      .from(leads)
+      .where(
+        cursor
+          ? and(
+              eq(leads.formId, ownedForm.id),
+              or(
+                lt(leads.createdAt, new Date(cursor.createdAt)),
+                and(
+                  eq(leads.createdAt, new Date(cursor.createdAt)),
+                  lt(leads.id, cursor.id)
+                )
+              )
+            )
+          : eq(leads.formId, ownedForm.id)
+      )
+      .orderBy(desc(leads.createdAt), desc(leads.id))
+      .limit(FORM_LEADS_PAGE_SIZE + 1);
+
+    const hasMore = rows.length > FORM_LEADS_PAGE_SIZE;
+    const items = rows.slice(0, FORM_LEADS_PAGE_SIZE);
+    const last = items.at(-1);
+    return {
+      items,
+      nextCursor:
+        hasMore && last
+          ? encodeLeadCursor({ createdAt: last.createdAt, id: last.id })
+          : null,
+    };
   });
 
 /**

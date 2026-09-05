@@ -38,8 +38,16 @@ export const config = {
       }
       return token;
     },
-    authorized: async ({ auth }) => {
-      return !!auth;
+    authorized: async ({ auth, request }) => {
+      const hostname = request.nextUrl.hostname;
+      const pathname = request.nextUrl.pathname;
+      const isPublicFormSurface =
+        hostname === "forms.router.so" ||
+        pathname.startsWith("/f/") ||
+        pathname.startsWith("/embed/") ||
+        pathname.startsWith("/api/public/") ||
+        pathname.startsWith("/api/integrations/wordpress/");
+      return isPublicFormSurface || !!auth;
     },
   },
   pages: {

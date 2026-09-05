@@ -12,6 +12,7 @@ import Link from "next/link";
 import { Progress } from "@/components/ui/progress";
 import { CircleAlert, ArrowUp } from "lucide-react";
 import { Badge } from "../ui/badge";
+import { resolveGraceLeadLimit } from "@/lib/forms/entitlements";
 
 export const Usage = ({
   totalUsage,
@@ -24,7 +25,7 @@ export const Usage = ({
 }) => {
   const calculateDaysLeft = () => {
     const now = new Date();
-    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
     const timeDiff = nextMonth.getTime() - now.getTime();
     return Math.ceil(timeDiff / (1000 * 3600 * 24));
   };
@@ -34,8 +35,8 @@ export const Usage = ({
   };
 
   const daysLeft = calculateDaysLeft();
-  const remaining = totalUsage - used;
-  const usagePercentage = (used / totalUsage) * 100;
+  const remaining = Math.max(0, totalUsage - used);
+  const usagePercentage = totalUsage > 0 ? (used / totalUsage) * 100 : 100;
 
   return (
     <Card className="w-full flex flex-col">
@@ -56,10 +57,12 @@ export const Usage = ({
               {plan}
             </Badge>
           </div>
-          <Progress value={usagePercentage} className="h-2" />
+          <Progress value={Math.min(100, usagePercentage)} className="h-2" />
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">
-              {formatNumber(remaining)} leads remaining
+              {used >= totalUsage
+                ? `Grace capacity: ${formatNumber(Math.max(0, resolveGraceLeadLimit(totalUsage) - used))} leads remaining`
+                : `${formatNumber(remaining)} leads remaining`}
             </p>
             <p className="flex items-center space-x-1 text-xs">
               <CircleAlert className="h-3 w-3 text-green-500" />
