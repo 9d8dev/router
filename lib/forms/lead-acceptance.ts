@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import {
@@ -267,6 +267,8 @@ export async function acceptLead(
         leadCount: usagePeriods.leadCount,
         notifiedAt80: usagePeriods.notifiedAt80,
         notifiedAt100: usagePeriods.notifiedAt100,
+        notificationLimit80: usagePeriods.notificationLimit80,
+        notificationLimit100: usagePeriods.notificationLimit100,
       });
 
     const graceLimit =
@@ -282,8 +284,9 @@ export async function acceptLead(
     const usageNotifications: UsageThreshold[] = crossedUsageThresholds({
       used: usage.leadCount,
       limit: monthlyLeadLimit,
-    }).filter((threshold) =>
-      threshold === 80 ? usage.notifiedAt80 === null : usage.notifiedAt100 === null
+    }).filter((threshold) => threshold === 80
+      ? usage.notifiedAt80 === null || usage.notificationLimit80 !== monthlyLeadLimit
+      : usage.notifiedAt100 === null || usage.notificationLimit100 !== monthlyLeadLimit
     );
     for (const threshold of usageNotifications) {
       const notificationLimitColumn =
@@ -294,14 +297,14 @@ export async function acceptLead(
         .update(usagePeriods)
         .set(
           threshold === 80
-            ? { notificationLimit80: monthlyLeadLimit }
-            : { notificationLimit100: monthlyLeadLimit }
+            ? { notificationLimit80: monthlyLeadLimit, notifiedAt80: null, notifyingAt80: null }
+            : { notificationLimit100: monthlyLeadLimit, notifiedAt100: null, notifyingAt100: null }
         )
         .where(
           and(
             eq(usagePeriods.userId, row.owner.id),
             eq(usagePeriods.periodStart, periodStart),
-            isNull(notificationLimitColumn)
+            sql`${notificationLimitColumn} is distinct from ${monthlyLeadLimit}`
           )
         );
     }

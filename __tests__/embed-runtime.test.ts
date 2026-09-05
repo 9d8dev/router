@@ -133,6 +133,7 @@ describe("embed v1 runtime", () => {
 
     await runtime.mount(target);
     expect(target.textContent).toContain("Network unavailable");
+    expect(target.querySelector('[role="alert"]')?.textContent).toContain("Network unavailable");
 
     vi.stubGlobal("fetch", vi.fn(async (url: string | URL) => {
       if (String(url).endsWith("/render-session")) {

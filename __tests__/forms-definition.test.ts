@@ -229,6 +229,12 @@ describe("FormDefinitionV1", () => {
     ];
     expect(isEndpointSchemaCompatible(tooManyFields)).toBe(false);
     expect(isEndpointSchemaCompatible(tooManyOptions)).toBe(false);
+    for (const bounds of [{ minItems: 2 }, { maxItems: 2 }]) {
+      expect(isEndpointSchemaCompatible([{
+        key: "tags", value: "string_array", required: true,
+        constraints: { allowedValues: ["a"], ...bounds },
+      }])).toBe(false);
+    }
   });
 
   it("compares an attached form's first publication with the endpoint contract", () => {

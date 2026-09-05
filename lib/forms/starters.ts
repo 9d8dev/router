@@ -136,7 +136,7 @@ function hasUsableAllowedValues(field: EndpointSeedField): boolean {
 export function isEndpointSchemaCompatible(schema: EndpointSeedField[]): boolean {
   if (schema.length > 100) return false;
   const keys = new Set<string>();
-  return schema.every((field) => {
+  const structurallyCompatible = schema.every((field) => {
     if (
       field.key.length > 80 ||
       !/^[A-Za-z][A-Za-z0-9_]*$/.test(field.key) ||
@@ -152,6 +152,16 @@ export function isEndpointSchemaCompatible(schema: EndpointSeedField[]): boolean
     }
     return true;
   });
+  if (!structurallyCompatible) return false;
+  return formDefinitionV1Schema.safeParse({
+    version: 1,
+    title: "Imported form",
+    fields: schema.map((field, index) =>
+      seedField(field, index, `imported_field_${index + 1}`, field.key, field.key)
+    ),
+    submitLabel: "Submit",
+    completion,
+  }).success;
 }
 
 function endpointOptions(

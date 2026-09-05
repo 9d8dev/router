@@ -63,9 +63,10 @@ export function usageNotificationIdempotencyKey(input: {
   userId: string;
   periodStart: string;
   threshold: UsageThreshold;
+  limit: number;
 }): string {
   return `router-usage-${createHash("sha256")
-    .update(`${input.userId}:${input.periodStart}:${input.threshold}`)
+    .update(`${input.userId}:${input.periodStart}:${input.threshold}:${input.limit}`)
     .digest("base64url")}`;
 }
 
@@ -112,7 +113,7 @@ export async function deliverUsageThresholdNotification(input: {
       threshold: input.threshold,
       limit: claimed.limit,
       periodStart: input.periodStart,
-      idempotencyKey: usageNotificationIdempotencyKey(input),
+      idempotencyKey: usageNotificationIdempotencyKey({ ...input, limit: claimed.limit }),
     });
     await database
       .update(usagePeriods)
@@ -126,7 +127,8 @@ export async function deliverUsageThresholdNotification(input: {
           eq(usagePeriods.userId, input.userId),
           eq(usagePeriods.periodStart, input.periodStart),
           isNull(notifiedColumn),
-          eq(notifyingColumn, now)
+          eq(notifyingColumn, now),
+          eq(limitColumn, claimed.limit)
         )
       );
     return true;
@@ -143,7 +145,8 @@ export async function deliverUsageThresholdNotification(input: {
           eq(usagePeriods.userId, input.userId),
           eq(usagePeriods.periodStart, input.periodStart),
           isNull(notifiedColumn),
-          eq(notifyingColumn, now)
+          eq(notifyingColumn, now),
+          eq(limitColumn, claimed.limit)
         )
       );
     throw error;

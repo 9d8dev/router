@@ -96,6 +96,35 @@ suite("Forms PostgreSQL integration through production services", () => {
     expect(result.rows[0].indexdef).toContain('(\"formId\", \"createdAt\")');
   });
 
+  it("re-arms monthly usage alerts for an upgraded allowance", async () => {
+    const id = `test-${randomUUID()}`;
+    userIds.push(id);
+    await database.insert(users).values({ id, email: `${id}@example.com`, plan: "pro" });
+    const [endpoint] = await database.insert(endpoints).values({
+      userId: id, name: "Upgrade alerts", schema: [], token: "test-token",
+      createdAt: new Date(), updatedAt: new Date(),
+    }).returning({ id: endpoints.id });
+    await database.insert(usagePeriods).values({
+      userId: id, periodStart: "2026-09-01", leadCount: 7_999,
+      notifiedAt80: new Date(), notifiedAt100: new Date(),
+      notificationLimit80: 100, notificationLimit100: 100,
+    });
+    // Keep delivery pending so the persisted claim can be inspected.
+    vi.stubEnv("RESEND_API_KEY", "");
+    try {
+      await acceptLead({ endpointId: endpoint.id, values: {}, placement: "headless" }, new Date("2026-09-04T12:00:00Z"), serviceDatabase);
+      const [usage] = await database.select().from(usagePeriods).where(eq(usagePeriods.userId, id));
+      expect(usage.notificationLimit80).toBe(10_000);
+      expect(usage.notifiedAt80).toBeNull();
+      expect(usage.notificationLimit100).toBe(100);
+      await database.update(usagePeriods).set({ leadCount: 9_999 }).where(eq(usagePeriods.userId, id));
+      await acceptLead({ endpointId: endpoint.id, values: {}, placement: "headless" }, new Date("2026-09-04T12:00:00Z"), serviceDatabase);
+      const [atLimit] = await database.select().from(usagePeriods).where(eq(usagePeriods.userId, id));
+      expect(atLimit.notificationLimit100).toBe(10_000);
+      expect(atLimit.notifiedAt100).toBeNull();
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   afterAll(async () => {
     for (const id of userIds) {
       await database.delete(users).where(eq(users.id, id));

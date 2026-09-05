@@ -3,9 +3,16 @@ import {
   crossedUsageThresholds,
   sendUsageThresholdNotification,
   usageNotificationLeadCount,
+  usageNotificationIdempotencyKey,
 } from "../lib/forms/usage-notifications";
 
 describe("usage notification thresholds", () => {
+  it("uses distinct delivery identities after an allowance change", () => {
+    const input = { userId: "owner", periodStart: "2026-09-01", threshold: 80 as const };
+    expect(usageNotificationIdempotencyKey({ ...input, limit: 100 })).not.toBe(
+      usageNotificationIdempotencyKey({ ...input, limit: 10_000 })
+    );
+  });
   it("claims no notification below 80 percent", () => {
     expect(crossedUsageThresholds({ used: 79, limit: 100 })).toEqual([]);
   });

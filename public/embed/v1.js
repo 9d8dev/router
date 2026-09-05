@@ -409,7 +409,9 @@
       });
     } catch (error) {
       initialized.delete(target);
-      target.replaceChildren(element("p", "router-form-v1 router-form-v1__status", error && error.message ? error.message : "This form is unavailable."));
+      var unavailable = element("p", "router-form-v1 router-form-v1__status", error && error.message ? error.message : "This form is unavailable.");
+      unavailable.setAttribute("role", "alert");
+      target.replaceChildren(unavailable);
     } finally {
       target.removeAttribute("aria-busy");
     }

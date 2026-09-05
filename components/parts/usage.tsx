@@ -25,7 +25,7 @@ export const Usage = ({
 }) => {
   const calculateDaysLeft = () => {
     const now = new Date();
-    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
     const timeDiff = nextMonth.getTime() - now.getTime();
     return Math.ceil(timeDiff / (1000 * 3600 * 24));
   };
