@@ -11,8 +11,9 @@ This runbook deliberately separates code proof, database migration, deployment, 
 ## 2. Database gate
 
 - Back up the target PostgreSQL database.
-- Apply migrations `0006` through `0014` in order with `pnpm db:migrate`.
-- Confirm `forms`, `formOrigins`, `wordpressConnections`, `usagePeriods`, `formRateBuckets`, and `formPlacementMilestones` exist.
+- Apply migrations `0006` through `0018` in order with `pnpm db:migrate`.
+- Confirm `forms`, `formOrigins`, `wordpressConnections`, `usagePeriods`, `formRateBuckets`, `formPlacementMilestones`, and `formCacheInvalidation` exist, and that `formCacheInvalidation` has no cascading foreign key to `form` (migration `0018`).
+- Confirm the `wordpress_connection_active_owner_site_unique` index (migration `0016`) and the `user.stripeBillingInterval` column (migration `0015`) exist.
 - Confirm usage notification lease/limit columns, the Enterprise contract allowance columns, the Stripe subscription creation timestamp, and the form-lead lookup index exist; existing Enterprise accounts should have the compatibility allowance from `0013`.
 - Confirm existing endpoint and lead counts are unchanged and the current UTC usage backfill is plausible.
 

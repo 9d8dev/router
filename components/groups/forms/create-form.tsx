@@ -92,6 +92,7 @@ export function CreateForm({
                   key={starter.id}
                   type="button"
                   onClick={() => setStarterId(starter.id)}
+                  aria-pressed={starterId === starter.id}
                   className={cn(
                     "rounded-xl border bg-background p-4 text-left transition-colors hover:border-foreground/40",
                     starterId === starter.id && "border-foreground ring-2 ring-foreground/10"

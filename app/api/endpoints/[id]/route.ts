@@ -55,18 +55,18 @@ export async function POST(
     );
   }
 
-  const endpoint = await getPostingEndpointById(id);
-  if (!endpoint) {
-    return NextResponse.json({ message: "Endpoint not found." }, { status: 404 });
-  }
-  if (endpoint.token !== authorization.slice("Bearer ".length)) {
-    return NextResponse.json(
-      { message: "Unauthorized. Invalid token provided." },
-      { status: 401 }
-    );
-  }
-
   try {
+    const endpoint = await getPostingEndpointById(id);
+    if (!endpoint) {
+      return NextResponse.json({ message: "Endpoint not found." }, { status: 404 });
+    }
+    if (endpoint.token !== authorization.slice("Bearer ".length)) {
+      return NextResponse.json(
+        { message: "Unauthorized. Invalid token provided." },
+        { status: 401 }
+      );
+    }
+
     const values = await readLimitedJsonBody(request, MAX_BODY_BYTES);
     const result = await acceptLead({
       endpointId: id,
@@ -91,27 +91,29 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const endpoint = await getPostingEndpointById(id);
-  if (!endpoint) {
-    return NextResponse.json({ message: "Endpoint not found." }, { status: 404 });
-  }
-
   const referer = request.headers.get("referer");
-  const rawValues = constructBodyFromURLParameters(
-    new URL(request.url).searchParams
-  );
-  const values = convertToCorrectTypes(
-    rawValues,
-    endpoint.schema as GeneralSchema[]
-  );
+  let endpoint: Awaited<ReturnType<typeof getPostingEndpointById>> | undefined;
 
   try {
+    endpoint = await getPostingEndpointById(id);
+    if (!endpoint) {
+      return NextResponse.json({ message: "Endpoint not found." }, { status: 404 });
+    }
+
+    const rawValues = constructBodyFromURLParameters(
+      new URL(request.url).searchParams
+    );
+    const values = convertToCorrectTypes(
+      rawValues,
+      endpoint.schema as GeneralSchema[]
+    );
+
     await acceptLead({ endpointId: id, values, placement: "legacy_html" });
     return NextResponse.redirect(
       new URL(endpoint.successUrl || referer || "/success", request.url)
     );
   } catch (error) {
-    if (error instanceof LeadValidationError) {
+    if (endpoint && error instanceof LeadValidationError) {
       return NextResponse.redirect(
         new URL(endpoint.failUrl || referer || "/fail", request.url)
       );

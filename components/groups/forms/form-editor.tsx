@@ -156,6 +156,8 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
   const [publishedRevision, setPublishedRevision] = useState(form.publishedRevision);
   const [publishedAt, setPublishedAt] = useState<Date | null>(form.publishedAt);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error" | "conflict">("saved");
+  const saveStateRef = useRef(saveState);
+  saveStateRef.current = saveState;
   const [runtimeReady, setRuntimeReady] = useState(0);
   const [origins, setOrigins] = useState(initialOrigins);
   const [originInput, setOriginInput] = useState("");
@@ -257,6 +259,9 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
     if (JSON.stringify({ name, definition }) === lastSavedRef.current) return;
     if (recoverableDraft) return;
     preserveLatestDraft();
+    // After a revision conflict the page must be reloaded; keep the local
+    // draft current but do not retry the server save on every keystroke.
+    if (saveStateRef.current === "conflict") return;
     const timeout = window.setTimeout(() => void persistLatest(), 850);
     return () => window.clearTimeout(timeout);
   }, [definition, name, persistLatest, preserveLatestDraft, recoverableDraft]);
@@ -694,6 +699,9 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
           {selected ? (
             <FieldSettings
               field={selected}
+              duplicateKey={definition.fields.some(
+                (field) => field.id !== selected.id && field.key === selected.key
+              )}
               update={updateSelected}
               changeKind={(kind) =>
                 setDefinition((current) => ({
@@ -726,10 +734,12 @@ export function FormEditor({ form, origins: initialOrigins }: { form: EditorForm
 
 function FieldSettings({
   field,
+  duplicateKey,
   update,
   changeKind,
 }: {
   field: FormFieldV1;
+  duplicateKey: boolean;
   update: (patch: Record<string, unknown>) => void;
   changeKind: (kind: FieldKind) => void;
 }) {
@@ -759,7 +769,16 @@ function FieldSettings({
       </div>
       <div className="grid gap-2">
         <Label>Submission key</Label>
-        <Input value={field.key} onChange={(event) => update({ key: normalizeSubmissionKey(event.target.value) })} />
+        <Input
+          value={field.key}
+          aria-invalid={duplicateKey || undefined}
+          onChange={(event) => update({ key: normalizeSubmissionKey(event.target.value) })}
+        />
+        {duplicateKey && (
+          <p className="text-xs text-destructive" role="alert">
+            Another field already uses this submission key. Keys must be unique to publish.
+          </p>
+        )}
       </div>
       <div className="grid gap-2">
         <Label>Help text</Label>

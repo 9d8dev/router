@@ -13,6 +13,7 @@ if (!$registry->is_registered("router/forms")) {
     fwrite(STDERR, "Router Forms block was not registered.\n");
     exit(1);
 }
+update_option("router_forms_site_token", "secret-test-token");
 $shortcode = do_shortcode("[router_form id=browser-form]");
 $block = render_block(array(
     "blockName" => "router/forms",
@@ -38,7 +39,6 @@ if (strpos($block, "wp-block-router-forms") === false || strpos($block, "alignwi
     fwrite(STDERR, "Dynamic block did not apply WordPress block wrapper classes.\n");
     exit(1);
 }
-update_option("router_forms_site_token", "secret-test-token");
 if (strpos($combined, "secret-test-token") !== false) {
     fwrite(STDERR, "The site token leaked into frontend markup.\n");
     exit(1);

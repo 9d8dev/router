@@ -37,14 +37,18 @@ describe("usage notification thresholds", () => {
   it("keeps delivery retryable when email is not configured", async () => {
     const originalKey = process.env.RESEND_API_KEY;
     delete process.env.RESEND_API_KEY;
-    await expect(
-      sendUsageThresholdNotification({
-        email: "owner@example.com",
-        threshold: 80,
-        limit: 100,
-        periodStart: "2026-09-01",
-      })
-    ).rejects.toThrow("not configured");
-    if (originalKey) process.env.RESEND_API_KEY = originalKey;
+    try {
+      await expect(
+        sendUsageThresholdNotification({
+          email: "owner@example.com",
+          threshold: 80,
+          limit: 100,
+          periodStart: "2026-09-01",
+        })
+      ).rejects.toThrow("not configured");
+    } finally {
+      if (originalKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = originalKey;
+    }
   });
 });

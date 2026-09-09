@@ -32,6 +32,36 @@ const inputSchema = z.object({
   website: z.string().max(500).optional(),
 });
 
+/**
+ * Early rejections happen before the placement is known. Approved embed
+ * origins still need CORS headers so the browser can read the status.
+ */
+async function earlyRejection(
+  input: { publicId: string; origin: string | null },
+  body: Record<string, unknown>,
+  status: number
+) {
+  let approved = false;
+  if (input.origin) {
+    for (const placement of ["embed", "wordpress"] as const) {
+      if (await isApprovedFormOrigin({ publicId: input.publicId, origin: input.origin, placement })) {
+        approved = true;
+        break;
+      }
+    }
+  }
+  return NextResponse.json(body, {
+    status,
+    headers: publicCorsHeaders(input.origin, approved),
+  });
+}
+
+/**
+ * Vercel overwrites `x-forwarded-for` at the edge with the verified client IP,
+ * so the leftmost entry is trustworthy on the supported deployment target. If
+ * this app is ever served behind another proxy, derive the IP from that
+ * proxy's trusted header instead.
+ */
 function clientIp(request: Request): string {
   return (
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
@@ -56,21 +86,26 @@ export async function POST(
     );
   } catch (error) {
     const status = error instanceof PayloadTooLargeError ? 413 : 400;
-    return NextResponse.json({ error: status === 413 ? "payload_too_large" : "invalid_request" }, { status });
+    return earlyRejection(
+      { publicId, origin },
+      { error: status === 413 ? "payload_too_large" : "invalid_request" },
+      status
+    );
   }
 
   let token;
   try {
     token = verifySubmissionToken(parsed.submitToken);
   } catch (error) {
-    return NextResponse.json(
+    return earlyRejection(
+      { publicId, origin },
       { error: "invalid_submit_token", message: error instanceof Error ? error.message : undefined },
-      { status: 401 }
+      401
     );
   }
 
   if (!submissionTokenMatchesRequest(token, { publicId, origin })) {
-    return NextResponse.json({ error: "invalid_submit_token" }, { status: 401 });
+    return earlyRejection({ publicId, origin }, { error: "invalid_submit_token" }, 401);
   }
   if (token.placement === "hosted") {
     if (!isHostedFormRequest(request)) {

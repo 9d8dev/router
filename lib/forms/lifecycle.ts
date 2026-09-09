@@ -40,19 +40,26 @@ export async function deleteEndpointForUser(
   input: { id: string; userId: string },
   database: typeof db = db
 ): Promise<void> {
-  const [attachedForm] = await database
-    .select({ id: forms.id })
-    .from(forms)
-    .innerJoin(endpoints, eq(forms.endpointId, endpoints.id))
-    .where(
-      and(eq(forms.endpointId, input.id), eq(endpoints.userId, input.userId))
-    )
-    .limit(1);
-  if (attachedForm) throw new AttachedFormExistsError();
+  await database.transaction(async (tx) => {
+    // Lock the endpoint row so a concurrent form attachment (which takes a
+    // key-share lock through the foreign key) serializes against this delete.
+    const [endpoint] = await tx
+      .select({ id: endpoints.id })
+      .from(endpoints)
+      .where(and(eq(endpoints.id, input.id), eq(endpoints.userId, input.userId)))
+      .limit(1)
+      .for("update");
+    if (!endpoint) return;
 
-  await database
-    .delete(endpoints)
-    .where(and(eq(endpoints.id, input.id), eq(endpoints.userId, input.userId)));
+    const [attachedForm] = await tx
+      .select({ id: forms.id })
+      .from(forms)
+      .where(eq(forms.endpointId, input.id))
+      .limit(1);
+    if (attachedForm) throw new AttachedFormExistsError();
+
+    await tx.delete(endpoints).where(eq(endpoints.id, input.id));
+  });
 }
 
 export async function deleteFormForUser(
