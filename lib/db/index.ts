@@ -1,4 +1,4 @@
-// import "@/lib/db/config";
+import "@/lib/db/config";
 import { InferSelectModel, InferInsertModel } from "drizzle-orm";
 import { sql } from "@vercel/postgres";
 import { drizzle } from "drizzle-orm/vercel-postgres";

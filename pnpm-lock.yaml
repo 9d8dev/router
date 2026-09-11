@@ -160,7 +160,7 @@ importers:
         version: 3.6.0
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@types/pg@8.23.1)(@vercel/postgres@0.10.0(utf-8-validate@6.0.5))(pg@8.23.0)
+        version: 0.45.2(@neondatabase/serverless@0.9.5)(@types/pg@8.23.1)(@vercel/postgres@0.10.0(utf-8-validate@6.0.5))(pg@8.23.0)
       embla-carousel-react:
         specifier: ^8.6.0
         version: 8.6.0(react@19.2.8)
@@ -234,6 +234,9 @@ importers:
       '@eslint/eslintrc':
         specifier: ^3.3.6
         version: 3.3.6
+      '@neondatabase/serverless':
+        specifier: 0.9.5
+        version: 0.9.5
       '@playwright/test':
         specifier: ^1.62.1
         version: 1.62.1
@@ -8855,8 +8858,9 @@ snapshots:
       esbuild: 0.25.5
       tsx: 4.23.12
 
-  drizzle-orm@0.45.2(@types/pg@8.23.1)(@vercel/postgres@0.10.0(utf-8-validate@6.0.5))(pg@8.23.0):
+  drizzle-orm@0.45.2(@neondatabase/serverless@0.9.5)(@types/pg@8.23.1)(@vercel/postgres@0.10.0(utf-8-validate@6.0.5))(pg@8.23.0):
     optionalDependencies:
+      '@neondatabase/serverless': 0.9.5
       '@types/pg': 8.23.1
       '@vercel/postgres': 0.10.0(utf-8-validate@6.0.5)
       pg: 8.23.0

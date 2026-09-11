@@ -97,6 +97,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.6",
+    "@neondatabase/serverless": "0.9.5",
     "@playwright/test": "^1.62.1",
     "@tailwindcss/typography": "^0.5.16",
     "@testing-library/dom": "^10.4.0",
