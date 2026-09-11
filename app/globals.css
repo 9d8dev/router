@@ -59,6 +59,16 @@
   }
 }
 
+body:has(.router-hosted-form) nav {
+  display: none;
+}
+
+body:has(.router-hosted-form) {
+  display: block !important;
+  min-height: 100vh;
+  overflow: auto !important;
+}
+
 @layer base {
   * {
     @apply border-border;

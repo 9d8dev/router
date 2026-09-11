@@ -1,4 +1,4 @@
-import { resend } from "@/lib/utils/resend";
+import { getResend } from "@/lib/utils/resend";
 import MagicLinkEmail from "@/components/email/magic-link-email";
 
 export async function sendVerificationRequest(params: {
@@ -11,7 +11,7 @@ export async function sendVerificationRequest(params: {
   const { host } = new URL(url);
 
   try {
-    const data = await resend.emails.send({
+    const data = await getResend().emails.send({
       from: "info@router.so",
       to: [identifier],
       subject: `Log in to ${host}`,

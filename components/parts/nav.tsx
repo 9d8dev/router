@@ -5,16 +5,28 @@ import Image from "next/image";
 import { ModeToggle } from "@/components/parts/mode-toggle";
 import { getUsageForUser } from "@/lib/data/users";
 import { LucideProps } from "lucide-react";
+import { formsNavigationEnabled } from "@/lib/forms/feature-flags";
 
 // Image Imports
 import Logo from "@/public/logo.svg";
 
 // Icon Imports
-import { BarChart, Contact, Layers, LifeBuoy, Disc3, Book } from "lucide-react";
+import {
+  BarChart,
+  Contact,
+  Layers,
+  LifeBuoy,
+  Disc3,
+  Book,
+  FileText,
+} from "lucide-react";
 
 const links = [
   { href: "/", text: "Dashboard", icon: BarChart },
   { href: "/endpoints", text: "Endpoints", icon: Layers },
+  ...(formsNavigationEnabled()
+    ? [{ href: "/forms", text: "Forms", icon: FileText }]
+    : []),
   { href: "/leads", text: "Leads", icon: Contact },
   { href: "/logs", text: "Logs", icon: Disc3 },
 ];

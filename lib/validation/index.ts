@@ -20,6 +20,7 @@ export const validationOptions: { name: ValidationType }[] = [
   { name: "boolean" },
   { name: "url" },
   { name: "zip_code" },
+  { name: "string_array" },
 ];
 
 /**
@@ -37,6 +38,7 @@ export const normalizedValidationOption = {
   boolean: "Boolean",
   url: "URL",
   zip_code: "Zip Code",
+  string_array: "String Array",
 }
 
 /**
@@ -58,6 +60,7 @@ export const validations: { [key in ValidationType]: z.ZodType<any, any> } = {
     .string()
     .min(5, "Not a valid zip code.")
     .max(5, "Not a valid zip code."),
+  string_array: z.array(z.string()),
 };
 
 /**
@@ -81,6 +84,8 @@ export const convertToCorrectTypes = (
       // Convert string to number, ensuring NaN is handled appropriately
       const num = Number(data[key]);
       result[key] = isNaN(num) ? undefined : num;
+    } else if (value === "string_array") {
+      result[key] = Array.isArray(data[key]) ? data[key] : [data[key]].filter(Boolean);
     } else {
       // For all other types, assume string or no conversion needed
       result[key] = data[key];

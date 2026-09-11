@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schemas.wp.org/trunk/block.json",
+  "apiVersion": 3,
+  "name": "router/forms",
+  "version": "1.0.0",
+  "title": "Router Form",
+  "category": "widgets",
+  "icon": "feedback",
+  "description": "Render a published Router form using your theme's typography and colors.",
+  "textdomain": "router-forms",
+  "attributes": {
+    "formId": {
+      "type": "string",
+      "default": ""
+    }
+  },
+  "supports": {
+    "html": false,
+    "align": ["wide", "full"],
+    "spacing": {
+      "margin": true,
+      "padding": true
+    }
+  },
+  "editorScript": "file:./editor.js",
+  "render": "file:./render.php"
+}

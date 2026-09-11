@@ -1,0 +1,2 @@
+DROP INDEX "wordpress_connection_owner_site_idx";--> statement-breakpoint
+CREATE UNIQUE INDEX "wordpress_connection_active_owner_site_unique" ON "wordpressConnection" USING btree ("userId","siteOrigin") WHERE "wordpressConnection"."revokedAt" IS NULL;

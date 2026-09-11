@@ -2,10 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { db, Endpoint } from "../db";
-import { endpoints } from "../db/schema";
-import { eq, desc, and } from "drizzle-orm";
+import { endpoints, forms } from "../db/schema";
+import { eq, desc, and, isNotNull } from "drizzle-orm";
 import { getErrorMessage } from "@/lib/helpers/error-message";
-import { authenticatedAction } from "./safe-action";
+import { ActionError, authenticatedAction } from "./safe-action";
 import { z } from "zod";
 import {
   createEndpointFormSchema,
@@ -13,6 +13,31 @@ import {
 } from "./validations";
 import { randomBytes } from "crypto";
 import { redirect } from "next/navigation";
+import { invalidatePublishedForm } from "@/lib/forms/cache";
+import { endpointSchemaForUpdate } from "@/lib/forms/endpoint-schema";
+import {
+  AttachedFormExistsError,
+  deleteEndpointForUser,
+  listAttachableEndpointsForUser,
+} from "@/lib/forms/lifecycle";
+
+async function invalidateAttachedPublishedForm(
+  endpointId: string,
+  userId: string
+): Promise<void> {
+  const [attachedForm] = await db
+    .select({ publicId: forms.publicId })
+    .from(forms)
+    .where(
+      and(
+        eq(forms.endpointId, endpointId),
+        eq(forms.userId, userId),
+        isNotNull(forms.publishedAt)
+      )
+    )
+    .limit(1);
+  if (attachedForm) invalidatePublishedForm(attachedForm.publicId);
+}
 
 /**
  * Gets all endpoints for a user
@@ -29,6 +54,10 @@ export const getEndpoints = authenticatedAction.action(
 
     return data;
   }
+);
+
+export const getAttachableEndpoints = authenticatedAction.action(
+  async ({ ctx: { userId } }) => listAttachableEndpointsForUser(userId)
 );
 
 /**
@@ -65,9 +94,14 @@ export const getPostingEndpointById = async (id: string) => {
 export const deleteEndpoint = authenticatedAction
   .schema(z.object({ id: z.string() }))
   .action(async ({ parsedInput: { id }, ctx: { userId } }) => {
-    await db
-      .delete(endpoints)
-      .where(and(eq(endpoints.id, id), eq(endpoints.userId, userId)));
+    try {
+      await deleteEndpointForUser({ id, userId });
+    } catch (error) {
+      if (error instanceof AttachedFormExistsError) {
+        throw new ActionError(error.message);
+      }
+      throw error;
+    }
     revalidatePath("/endpoints");
   });
 
@@ -83,6 +117,7 @@ export const disableEndpoint = authenticatedAction
       .update(endpoints)
       .set({ enabled: false, updatedAt: new Date() })
       .where(and(eq(endpoints.id, id), eq(endpoints.userId, userId)));
+    await invalidateAttachedPublishedForm(id, userId);
     revalidatePath("/endpoints");
   });
 
@@ -98,6 +133,7 @@ export const enableEndpoint = authenticatedAction
       .update(endpoints)
       .set({ enabled: true, updatedAt: new Date() })
       .where(and(eq(endpoints.id, id), eq(endpoints.userId, userId)));
+    await invalidateAttachedPublishedForm(id, userId);
     revalidatePath("/endpoints");
   });
 
@@ -140,23 +176,49 @@ export const createEndpoint = authenticatedAction
 export const updateEndpoint = authenticatedAction
   .schema(updateEndpointFormSchema)
   .action(async ({ parsedInput, ctx: { userId } }) => {
-    await db
-      .update(endpoints)
-      .set({
-        name: parsedInput.name,
-        schema: parsedInput.schema,
-        // TODO: add this to form
-        // enabled: parsedInput.enabled,
-        formEnabled: parsedInput.formEnabled,
-        successUrl: parsedInput.successUrl,
-        failUrl: parsedInput.failUrl,
-        webhookEnabled: parsedInput.webhookEnabled,
-        webhook: parsedInput.webhook,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(eq(endpoints.id, parsedInput.id), eq(endpoints.userId, userId))
+    await db.transaction(async (tx) => {
+      const [current] = await tx
+        .select({
+          schema: endpoints.schema,
+          attachedFormId: forms.id,
+        })
+        .from(endpoints)
+        .leftJoin(forms, eq(forms.endpointId, endpoints.id))
+        .where(
+          and(eq(endpoints.id, parsedInput.id), eq(endpoints.userId, userId))
+        )
+        .limit(1);
+      if (!current) throw new ActionError("Endpoint not found.");
+
+      const nextSchema = endpointSchemaForUpdate(
+        current.schema,
+        parsedInput.schema,
+        Boolean(current.attachedFormId)
       );
+      if (nextSchema === null) {
+        throw new ActionError(
+          "Edit fields in the attached form builder, then publish the form to update this endpoint schema."
+        );
+      }
+
+      await tx
+        .update(endpoints)
+        .set({
+          name: parsedInput.name,
+          ...(nextSchema === undefined ? {} : { schema: nextSchema }),
+          // TODO: add this to form
+          // enabled: parsedInput.enabled,
+          formEnabled: parsedInput.formEnabled,
+          successUrl: parsedInput.successUrl,
+          failUrl: parsedInput.failUrl,
+          webhookEnabled: parsedInput.webhookEnabled,
+          webhook: parsedInput.webhook,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(eq(endpoints.id, parsedInput.id), eq(endpoints.userId, userId))
+        );
+    });
 
     revalidatePath("/endpoints");
     redirect("/endpoints");

@@ -1,0 +1,599 @@
+import { randomUUID } from "node:crypto";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { Pool } from "pg";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { and, eq } from "drizzle-orm";
+import {
+  endpoints,
+  formCacheInvalidations,
+  formOrigins,
+  forms,
+  leads,
+  usagePeriods,
+  users,
+  wordpressConnections,
+} from "../lib/db/schema";
+import { FORM_STARTERS } from "../lib/forms/starters";
+import {
+  FormDraftConflictError,
+  FormPublicationConflictError,
+  publishFormForUser,
+  saveFormDraftForUser,
+} from "../lib/forms/publication";
+import {
+  AttachedFormExistsError,
+  deleteEndpointForUser,
+  deleteFormForUser,
+  listAttachableEndpointsForUser,
+  unpublishFormForUser,
+} from "../lib/forms/lifecycle";
+import {
+  acceptLead,
+  LeadCapacityError,
+  LeadStaleRevisionError,
+} from "../lib/forms/lead-acceptance";
+import {
+  createWordPressConnectionForUser,
+  WordPressConnectionExistsError,
+} from "../lib/forms/wordpress-connections";
+import { createFormForUser } from "../lib/forms/form-creation";
+
+vi.mock("next/cache", () => ({
+  revalidatePath: vi.fn(),
+}));
+
+const databaseUrl = process.env.TEST_DATABASE_URL;
+const suite = databaseUrl ? describe.sequential : describe.skip;
+
+suite("Forms PostgreSQL integration through production services", () => {
+  const pool = new Pool({ connectionString: databaseUrl });
+  const database = drizzle(pool);
+  const serviceDatabase = database as unknown as Parameters<
+    typeof publishFormForUser
+  >[1];
+  const userIds: string[] = [];
+  const userId = `test-${randomUUID()}`;
+  let endpointId = "";
+  let formId = "";
+  beforeAll(async () => {
+    userIds.push(userId);
+    await database.insert(users).values({
+      id: userId,
+      email: `${userId}@example.com`,
+    });
+    const [endpoint] = await database
+      .insert(endpoints)
+      .values({
+        userId,
+        name: "Integration endpoint",
+        schema: [],
+        token: "test-token",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning({ id: endpoints.id });
+    endpointId = endpoint.id;
+    const [form] = await database
+      .insert(forms)
+      .values({
+        userId,
+        endpointId,
+        name: "Integration form",
+        draftDefinition: FORM_STARTERS.contact,
+      })
+      .returning({ id: forms.id });
+    formId = form.id;
+  });
+
+  it("indexes form-filtered leads by creation time", async () => {
+    const result = await pool.query<{ indexdef: string }>(`
+      SELECT indexdef
+      FROM pg_indexes
+      WHERE schemaname = 'public' AND indexname = 'lead_form_created_idx'
+    `);
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].indexdef).toContain('(\"formId\", \"createdAt\")');
+  });
+
+  it("re-arms monthly usage alerts for an upgraded allowance", async () => {
+    const id = `test-${randomUUID()}`;
+    userIds.push(id);
+    await database.insert(users).values({ id, email: `${id}@example.com`, plan: "pro" });
+    const [endpoint] = await database.insert(endpoints).values({
+      userId: id, name: "Upgrade alerts", schema: [], token: "test-token",
+      createdAt: new Date(), updatedAt: new Date(),
+    }).returning({ id: endpoints.id });
+    await database.insert(usagePeriods).values({
+      userId: id, periodStart: "2026-09-01", leadCount: 7_999,
+      notifiedAt80: new Date(), notifiedAt100: new Date(),
+      notificationLimit80: 100, notificationLimit100: 100,
+    });
+    // Keep delivery pending so the persisted claim can be inspected.
+    vi.stubEnv("RESEND_API_KEY", "");
+    try {
+      await acceptLead({ endpointId: endpoint.id, values: {}, placement: "headless" }, new Date("2026-09-04T12:00:00Z"), serviceDatabase);
+      const [usage] = await database.select().from(usagePeriods).where(eq(usagePeriods.userId, id));
+      expect(usage.notificationLimit80).toBe(10_000);
+      expect(usage.notifiedAt80).toBeNull();
+      expect(usage.notificationLimit100).toBe(100);
+      await database.update(usagePeriods).set({ leadCount: 9_999 }).where(eq(usagePeriods.userId, id));
+      await acceptLead({ endpointId: endpoint.id, values: {}, placement: "headless" }, new Date("2026-09-04T12:00:00Z"), serviceDatabase);
+      const [atLimit] = await database.select().from(usagePeriods).where(eq(usagePeriods.userId, id));
+      expect(atLimit.notificationLimit100).toBe(10_000);
+      expect(atLimit.notifiedAt100).toBeNull();
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  afterAll(async () => {
+    for (const id of userIds) {
+      await database.delete(users).where(eq(users.id, id));
+    }
+    await pool.end();
+  });
+
+  it("rejects one of two draft saves that start from the same revision", async () => {
+    const attempts = await Promise.allSettled([
+      saveFormDraftForUser({
+        id: formId,
+        userId,
+        expectedRevision: 1,
+        name: "Integration form A",
+        definition: { ...FORM_STARTERS.contact, title: "Contact A" },
+      }, serviceDatabase),
+      saveFormDraftForUser({
+        id: formId,
+        userId,
+        expectedRevision: 1,
+        name: "Integration form B",
+        definition: { ...FORM_STARTERS.contact, title: "Contact B" },
+      }, serviceDatabase),
+    ]);
+
+    expect(attempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(1);
+    const rejection = attempts.find((attempt) => attempt.status === "rejected");
+    expect(rejection).toMatchObject({ reason: expect.any(FormDraftConflictError) });
+  });
+
+  it("publishes the endpoint schema and immutable snapshot through the production transaction", async () => {
+    const published = await publishFormForUser({
+      id: formId,
+      userId,
+      expectedDraftRevision: 2,
+    }, serviceDatabase);
+
+    const [storedForm] = await database
+      .select()
+      .from(forms)
+      .where(eq(forms.id, formId));
+    const [endpoint] = await database
+      .select()
+      .from(endpoints)
+      .where(eq(endpoints.id, endpointId));
+    expect(published.publishedRevision).toBe(1);
+    expect(storedForm.publishedRevision).toBe(1);
+    expect(storedForm.publishedDefinition).toEqual(storedForm.draftDefinition);
+    const pendingInvalidations =
+      await database
+        .select({
+          publicId: formCacheInvalidations.publicId,
+          publishedRevision: formCacheInvalidations.publishedRevision,
+        })
+        .from(formCacheInvalidations)
+        .where(eq(formCacheInvalidations.formId, formId));
+    expect(pendingInvalidations).toEqual([
+      {
+        publicId: published.publicId,
+        publishedRevision: published.publishedRevision,
+      },
+    ]);
+    expect(endpoint.schema).toMatchObject([
+      { key: "name", value: "string", required: true },
+      { key: "email", value: "email", required: true },
+      { key: "message", value: "string", required: true },
+    ]);
+  });
+
+  it("allows only one publisher to claim the same draft and public revision", async () => {
+    const attempts = await Promise.allSettled([
+      publishFormForUser({ id: formId, userId, expectedDraftRevision: 2 }, serviceDatabase),
+      publishFormForUser({ id: formId, userId, expectedDraftRevision: 2 }, serviceDatabase),
+    ]);
+
+    expect(attempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(1);
+    const rejection = attempts.find((attempt) => attempt.status === "rejected");
+    expect(rejection).toMatchObject({
+      reason: expect.any(FormPublicationConflictError),
+    });
+  });
+
+  it("blocks endpoint deletion through the production lifecycle service", async () => {
+    await expect(
+      deleteEndpointForUser({ id: endpointId, userId }, serviceDatabase)
+    ).rejects.toBeInstanceOf(AttachedFormExistsError);
+  });
+
+  it("lists only endpoints that do not already have a form", async () => {
+    const [availableEndpoint] = await database
+      .insert(endpoints)
+      .values({
+        userId,
+        name: "Available endpoint",
+        schema: [{ key: "email", value: "email", required: true }],
+        token: "available-token",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning({ id: endpoints.id });
+
+    const attachable = await listAttachableEndpointsForUser(
+      userId,
+      serviceDatabase
+    );
+
+    expect(attachable.map((endpoint) => endpoint.id)).toContain(
+      availableEndpoint.id
+    );
+    expect(attachable.map((endpoint) => endpoint.id)).not.toContain(endpointId);
+  });
+
+  it("allows only one active WordPress connection per user and site", async () => {
+    const connectionUserId = `test-${randomUUID()}`;
+    userIds.push(connectionUserId);
+    await database.insert(users).values({
+      id: connectionUserId,
+      email: `${connectionUserId}@example.com`,
+    });
+
+    const attempts = await Promise.allSettled([
+      createWordPressConnectionForUser({
+        userId: connectionUserId,
+        siteOrigin: "https://example.com",
+        siteName: "Example",
+        token: "router_wp_first",
+      }, serviceDatabase),
+      createWordPressConnectionForUser({
+        userId: connectionUserId,
+        siteOrigin: "https://example.com",
+        siteName: "Example",
+        token: "router_wp_second",
+      }, serviceDatabase),
+    ]);
+
+    expect(attempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(1);
+    const rejection = attempts.find((attempt) => attempt.status === "rejected");
+    expect(rejection).toMatchObject({
+      reason: expect.any(WordPressConnectionExistsError),
+    });
+    expect(
+      await database
+        .select({ id: wordpressConnections.id })
+        .from(wordpressConnections)
+        .where(eq(wordpressConnections.userId, connectionUserId))
+    ).toHaveLength(1);
+  });
+
+  it("links a form and WordPress connection created concurrently", async () => {
+    const concurrentUserId = `test-${randomUUID()}`;
+    userIds.push(concurrentUserId);
+    await database.insert(users).values({
+      id: concurrentUserId,
+      email: `${concurrentUserId}@example.com`,
+    });
+
+    const [createdForm, createdConnection] = await Promise.all([
+      createFormForUser({
+        userId: concurrentUserId,
+        name: "Concurrent form",
+        starterId: "contact",
+      }, serviceDatabase),
+      createWordPressConnectionForUser({
+        userId: concurrentUserId,
+        siteOrigin: "https://concurrent.example.com",
+        siteName: "Concurrent site",
+        token: "router_wp_concurrent",
+      }, serviceDatabase),
+    ]);
+
+    expect(
+      await database
+        .select({ id: formOrigins.id })
+        .from(formOrigins)
+        .where(
+          and(
+            eq(formOrigins.formId, createdForm.id),
+            eq(formOrigins.connectionId, createdConnection.id)
+          )
+        )
+    ).toHaveLength(1);
+  });
+
+  it("removing a form preserves its endpoint and attributed leads", async () => {
+    const lifecycleUserId = `test-${randomUUID()}`;
+    userIds.push(lifecycleUserId);
+    await database.insert(users).values({
+      id: lifecycleUserId,
+      email: `${lifecycleUserId}@example.com`,
+    });
+    const [endpoint] = await database
+      .insert(endpoints)
+      .values({
+        userId: lifecycleUserId,
+        name: "Attached endpoint",
+        schema: [{ key: "email", value: "email", required: true }],
+        token: "attached-token",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning({ id: endpoints.id });
+    const [form] = await database
+      .insert(forms)
+      .values({
+        userId: lifecycleUserId,
+        endpointId: endpoint.id,
+        name: "Attached form",
+        draftDefinition: FORM_STARTERS.newsletter,
+        publishedDefinition: FORM_STARTERS.newsletter,
+        publishedRevision: 1,
+        publishedAt: new Date(),
+        attachedToExistingEndpoint: true,
+      })
+      .returning({ id: forms.id, publicId: forms.publicId });
+    const [lead] = await database
+      .insert(leads)
+      .values({
+        endpointId: endpoint.id,
+        formId: form.id,
+        formRevision: 1,
+        placement: "wordpress",
+        data: { email: "lead@example.com", consent: true },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning({ id: leads.id });
+
+    await deleteFormForUser(
+      { id: form.id, userId: lifecycleUserId },
+      serviceDatabase
+    );
+
+    expect(
+      await database
+        .select({ id: endpoints.id })
+        .from(endpoints)
+        .where(eq(endpoints.id, endpoint.id))
+    ).toHaveLength(1);
+    expect(
+      await database
+        .select({ id: leads.id, formId: leads.formId })
+        .from(leads)
+        .where(eq(leads.id, lead.id))
+    ).toEqual([{ id: lead.id, formId: null }]);
+    expect(
+      await database
+        .select({ publicId: formCacheInvalidations.publicId })
+        .from(formCacheInvalidations)
+        .where(eq(formCacheInvalidations.publicId, form.publicId))
+    ).toEqual([{ publicId: form.publicId }]);
+  });
+
+  it("unpublishes a form and queues cache invalidation atomically", async () => {
+    const unpublishUserId = `test-${randomUUID()}`;
+    userIds.push(unpublishUserId);
+    await database.insert(users).values({
+      id: unpublishUserId,
+      email: `${unpublishUserId}@example.com`,
+    });
+    const [endpoint] = await database
+      .insert(endpoints)
+      .values({
+        userId: unpublishUserId,
+        name: "Unpublish endpoint",
+        schema: [],
+        token: "unpublish-token",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning({ id: endpoints.id });
+    const [form] = await database
+      .insert(forms)
+      .values({
+        userId: unpublishUserId,
+        endpointId: endpoint.id,
+        name: "Unpublish form",
+        draftDefinition: FORM_STARTERS.contact,
+        publishedDefinition: FORM_STARTERS.contact,
+        publishedRevision: 3,
+        publishedAt: new Date(),
+      })
+      .returning({ id: forms.id, publicId: forms.publicId });
+
+    await unpublishFormForUser(
+      { id: form.id, userId: unpublishUserId },
+      serviceDatabase
+    );
+
+    expect(
+      await database
+        .select({ publishedAt: forms.publishedAt })
+        .from(forms)
+        .where(eq(forms.id, form.id))
+    ).toEqual([{ publishedAt: null }]);
+    expect(
+      await database
+        .select({
+          publicId: formCacheInvalidations.publicId,
+          publishedRevision: formCacheInvalidations.publishedRevision,
+        })
+        .from(formCacheInvalidations)
+        .where(eq(formCacheInvalidations.formId, form.id))
+    ).toEqual([{ publicId: form.publicId, publishedRevision: 3 }]);
+  });
+
+  it("rejects a render session whose published revision changed before acceptance", async () => {
+    const [storedForm] = await database
+      .select({ publicId: forms.publicId })
+      .from(forms)
+      .where(eq(forms.id, formId));
+
+    await expect(
+      acceptLead({
+        publicId: storedForm.publicId,
+        publishedRevision: 1,
+        placement: "hosted",
+        values: {
+          name: "Ada Lovelace",
+          email: "ada@example.com",
+          message: "Revision safety",
+        },
+      }, new Date(), serviceDatabase)
+    ).rejects.toBeInstanceOf(LeadStaleRevisionError);
+
+    const attributed = await database
+      .select({ id: leads.id })
+      .from(leads)
+      .where(eq(leads.formId, formId));
+    expect(attributed).toHaveLength(0);
+  });
+
+  it("enforces grace capacity atomically under concurrent production acceptance", async () => {
+    const quotaUserId = `test-${randomUUID()}`;
+    userIds.push(quotaUserId);
+    await database.insert(users).values({
+      id: quotaUserId,
+      email: `${quotaUserId}@example.com`,
+      plan: "enterprise",
+      enterpriseMonthlyLeadLimit: 15,
+    });
+    const [endpoint] = await database
+      .insert(endpoints)
+      .values({
+        userId: quotaUserId,
+        name: "Quota endpoint",
+        schema: [{ key: "email", value: "email", required: true }],
+        token: "quota-token",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning({ id: endpoints.id });
+
+    const attempts = await Promise.allSettled(
+      Array.from({ length: 20 }, (_, index) =>
+        acceptLead({
+          endpointId: endpoint.id,
+          placement: "headless",
+          values: { email: `lead-${index}@example.com` },
+        }, new Date(), serviceDatabase)
+      )
+    );
+
+    expect(attempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(16);
+    expect(
+      attempts
+        .filter((attempt) => attempt.status === "rejected")
+        .every((attempt) => attempt.reason instanceof LeadCapacityError)
+    ).toBe(true);
+    const [usage] = await database
+      .select({ leadCount: usagePeriods.leadCount })
+      .from(usagePeriods)
+      .where(eq(usagePeriods.userId, quotaUserId));
+    expect(usage.leadCount).toBe(16);
+  });
+
+  it("preserves legacy endpoint validation and webhook delivery", async () => {
+    const [endpoint] = await database
+      .insert(endpoints)
+      .values({
+        userId,
+        name: "Legacy webhook endpoint",
+        schema: [
+          { key: "name", value: "string" },
+          { key: "score", value: "number" },
+        ],
+        webhookEnabled: true,
+        webhook: "https://hooks.example.com/router",
+        token: "legacy-token",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning({ id: endpoints.id });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 204 }));
+
+    const accepted = await acceptLead({
+      endpointId: endpoint.id,
+      placement: "headless",
+      values: { name: "Grace Hopper", score: 4 },
+    }, new Date(), serviceDatabase);
+
+    expect(accepted.leadId).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://hooks.example.com/router",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ name: "Grace Hopper", score: 4 }),
+      })
+    );
+    fetchMock.mockRestore();
+  });
+
+  it("keeps an accepted lead successful when post-commit webhook logging fails", async () => {
+    const [endpoint] = await database
+      .insert(endpoints)
+      .values({
+        userId,
+        name: "Webhook logging failure endpoint",
+        schema: [{ key: "email", value: "email", required: true }],
+        webhookEnabled: true,
+        webhook: "https://hooks.example.com/router",
+        token: "webhook-log-failure-token",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning({ id: endpoints.id });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await pool.query(`
+      CREATE FUNCTION reject_webhook_logs() RETURNS trigger AS $$
+      BEGIN
+        IF NEW."postType" = 'webhook' THEN
+          RAISE EXCEPTION 'webhook log storage unavailable';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER reject_webhook_logs
+      BEFORE INSERT ON "log"
+      FOR EACH ROW EXECUTE FUNCTION reject_webhook_logs();
+    `);
+
+    try {
+      const accepted = await acceptLead(
+        {
+          endpointId: endpoint.id,
+          placement: "headless",
+          values: { email: "accepted@example.com" },
+        },
+        new Date(),
+        serviceDatabase
+      );
+
+      expect(accepted.leadId).toBeTruthy();
+      expect(
+        await database
+          .select({ id: leads.id })
+          .from(leads)
+          .where(eq(leads.id, accepted.leadId))
+      ).toHaveLength(1);
+    } finally {
+      await pool.query('DROP TRIGGER reject_webhook_logs ON "log"');
+      await pool.query("DROP FUNCTION reject_webhook_logs()");
+      fetchMock.mockRestore();
+      consoleError.mockRestore();
+    }
+  });
+});

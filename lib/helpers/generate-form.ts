@@ -33,11 +33,48 @@ export const generateShadcnForm = (schema: GeneralSchema[]): string => {
       case "zip_code":
         zodType = "z.string().regex(/^\\d{5}(?:[-\\s]\\d{4})?$/)";
         break;
+      case "string_array":
+        zodType = "z.array(z.string())";
+        break;
       default:
         zodType = "z.string()";
     }
-    if (field.required) {
-      zodType += ".min(1, { message: 'This field is required' })";
+
+    const stringTypes: ValidationType[] = [
+      "string",
+      "email",
+      "url",
+      "phone",
+      "zip_code",
+    ];
+    if (stringTypes.includes(field.value)) {
+      const minimum = field.constraints?.minLength ?? (field.required ? 1 : 0);
+      if (minimum > 0) {
+        zodType += `.min(${minimum}, { message: 'This field is required' })`;
+      }
+      if (field.constraints?.maxLength !== undefined) {
+        zodType += `.max(${field.constraints.maxLength})`;
+      }
+      if (field.constraints?.allowedValues) {
+        zodType += `.refine((value) => ${JSON.stringify(field.constraints.allowedValues)}.includes(value), { message: 'Choose a valid option' })`;
+      }
+    } else if (field.value === "string_array") {
+      const minimum = field.constraints?.minItems ?? (field.required ? 1 : 0);
+      if (minimum > 0) {
+        zodType += `.min(${minimum}, { message: 'Select at least ${minimum} options' })`;
+      }
+      if (field.constraints?.maxItems !== undefined) {
+        zodType += `.max(${field.constraints.maxItems})`;
+      }
+      if (field.constraints?.allowedValues) {
+        zodType += `.refine((values) => values.every((value) => ${JSON.stringify(field.constraints.allowedValues)}.includes(value)), { message: 'Choose only valid options' })`;
+      }
+    } else if (field.value === "boolean" && field.constraints?.mustBeTrue) {
+      zodType += ".refine((value) => value, { message: 'This field is required' })";
+    }
+
+    if (field.required === false) {
+      zodType += ".optional()";
     }
     return zodType;
   };
@@ -75,6 +112,31 @@ export const generateShadcnForm = (schema: GeneralSchema[]): string => {
             />
           </PopoverContent>
         </Popover>
+      `;
+    } else if (field.value === "string_array") {
+      const options = JSON.stringify(field.constraints?.allowedValues ?? []);
+      return `
+        <div className="space-y-2">
+          {${options}.map((option) => {
+            const selected = Array.isArray(field.value) ? field.value : [];
+            return (
+              <label key={option} className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(option)}
+                  onChange={(event) =>
+                    field.onChange(
+                      event.target.checked
+                        ? [...selected, option]
+                        : selected.filter((value) => value !== option)
+                    )
+                  }
+                />
+                {option}
+              </label>
+            );
+          })}
+        </div>
       `;
     } else {
       return `

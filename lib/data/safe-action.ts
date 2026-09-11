@@ -4,7 +4,7 @@ import {
 } from "next-safe-action";
 import { auth } from "../auth";
 
-class ActionError extends Error {}
+export class ActionError extends Error {}
 
 /**
  * Creates a client of next-safe-action to use in server actions

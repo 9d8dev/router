@@ -3,6 +3,10 @@
     {
       "path": "/api/cron",
       "schedule": "1 0 1 * *"
+    },
+    {
+      "path": "/api/cron/forms-maintenance",
+      "schedule": "17 * * * *"
     }
   ]
 }

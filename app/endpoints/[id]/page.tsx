@@ -19,6 +19,11 @@ import Icon from "@/public/icon.svg";
 import CopyButton from "@/components/parts/copy-button";
 import { generateShadcnForm } from "@/lib/helpers/generate-form";
 import { notFound } from "next/navigation";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { getFormForEndpoint } from "@/lib/data/forms";
+import { formsNavigationEnabled } from "@/lib/forms/feature-flags";
+import { isEndpointSchemaCompatible } from "@/lib/forms/starters";
 
 const pageData = {
   title: "Endpoint",
@@ -34,12 +39,14 @@ export default async function Page({
 
   // fetch endpoint
   const endpoint = await getEndpointById({ id });
+  const attachedForm = await getFormForEndpoint({ endpointId: id });
   const { data: endpointData, serverError } = endpoint || {};
 
   // check for errors
   if (!endpointData || serverError) notFound();
 
   const schema = endpointData?.schema as GeneralSchema[];
+  const endpointSupportsForm = isEndpointSchemaCompatible(schema);
 
   const url = `https://app.router.so/api/endpoints/${endpointData.id}`;
 
@@ -88,6 +95,32 @@ export default async function Page({
         <Header
           title={`${pageData?.title}: ${"`"}${endpointData?.name}${"`"}`}
         >{`${pageData?.description}`}</Header>
+        {formsNavigationEnabled() &&
+          (attachedForm?.data || endpointSupportsForm) && (
+          <div className="mb-6 flex items-center justify-between rounded-lg border bg-background p-4">
+            <div>
+              <p className="text-sm font-medium">
+                {attachedForm?.data
+                  ? "This endpoint has a form"
+                  : "Add a published presentation"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                The endpoint URL and bearer-token API remain available either way.
+              </p>
+            </div>
+            <Button asChild variant={attachedForm?.data ? "outline" : "default"}>
+              <Link
+                href={
+                  attachedForm?.data
+                    ? `/forms/${attachedForm.data.id}`
+                    : `/forms/create?endpointId=${id}`
+                }
+              >
+                {attachedForm?.data ? "Edit form" : "Build a form"}
+              </Link>
+            </Button>
+          </div>
+        )}
         <SchemaTable schema={schema} />
         <Craft.Main className="prose-md">
           <Separator />
