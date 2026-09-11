@@ -5,6 +5,7 @@ import type { NextAuthConfig } from "next-auth";
 import { User } from "next-auth";
 import Resend from "next-auth/providers/resend";
 import GitHub from "next-auth/providers/github";
+import { authorizeRequest } from "./authorize";
 
 declare module "next-auth" {
   interface Session extends User {
@@ -38,17 +39,8 @@ export const config = {
       }
       return token;
     },
-    authorized: async ({ auth, request }) => {
-      const hostname = request.nextUrl.hostname;
-      const pathname = request.nextUrl.pathname;
-      const isPublicFormSurface =
-        hostname === "forms.router.so" ||
-        pathname.startsWith("/f/") ||
-        pathname.startsWith("/embed/") ||
-        pathname.startsWith("/api/public/") ||
-        pathname.startsWith("/api/integrations/wordpress/");
-      return isPublicFormSurface || !!auth;
-    },
+    authorized: async ({ auth, request }) =>
+      authorizeRequest({ authenticated: !!auth, nextUrl: request.nextUrl }),
   },
   pages: {
     signIn: "/login",
