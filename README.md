@@ -28,7 +28,7 @@ After creating your accounts, update your `.env.example` to be `.env.local` for 
 
    ```sh
    git clone https://github.com/routerso/router.git
-   cd router/main
+   cd router
    ```
 ### Without Docker
 
